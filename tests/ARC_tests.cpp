@@ -71,13 +71,79 @@ TEST(ARC, repeated_hit) {
     }
 }
 
-TEST(ARC, duplicate_preserves_value) {
+TEST(ARC, duplicate_updates_value) {
     StringCache cache;
     insert(cache, "A", "original");
     insert(cache, "A", "replacement");
-    expect_hit(cache, "A", "original");
+    expect_hit(cache, "A", "replacement");
     insert(cache, "A", "another replacement");
-    expect_hit(cache, "A", "original");
+    expect_hit(cache, "A", "another replacement");
+    insert(cache, "A", "");
+    expect_hit(cache, "A", "");
+}
+
+TEST(ARC, duplicate_at_capacity) {
+    StringCache cache;
+    fill(cache);
+    const auto initial_parameter = cache.get_size_parameter();
+    insert(cache, "B", "updated-B");
+    EXPECT_EQ(cache.get_size_parameter(), initial_parameter)
+        << "resident update changed adaptation parameter";
+    for (const auto* key : {"A", "C", "D"}) {
+        expect_hit(cache, key, std::string("value-") + key);
+    }
+    expect_hit(cache, "B", "updated-B");
+}
+
+TEST(ARC, duplicate_promotes_page) {
+    StringCache cache;
+    fill(cache);
+    insert(cache, "A", "updated-A");
+    insert(cache, "E", "value-E");
+    expect_miss(cache, "B");
+    expect_hit(cache, "A", "updated-A");
+    for (const auto* key : {"C", "D", "E"}) {
+        expect_hit(cache, key, std::string("value-") + key);
+    }
+}
+
+TEST(ARC, duplicate_refreshes_recency) {
+    StringCache cache;
+    fill(cache);
+    for (const auto* key : {"A", "B", "C", "D"}) {
+        expect_hit(cache, key, std::string("value-") + key);
+    }
+    const auto initial_parameter = cache.get_size_parameter();
+    insert(cache, "A", "updated-A");
+    EXPECT_EQ(cache.get_size_parameter(), initial_parameter)
+        << "resident update changed adaptation parameter";
+    insert(cache, "E", "value-E");
+    expect_miss(cache, "B");
+    expect_hit(cache, "A", "updated-A");
+    for (const auto* key : {"C", "D", "E"}) {
+        expect_hit(cache, key, std::string("value-") + key);
+    }
+}
+
+TEST(ARC, update_releases_old_data) {
+    ARC::Cache<std::shared_ptr<int>> cache;
+    auto payload = std::make_shared<int>(42);
+    const std::weak_ptr<int> observer = payload;
+    ASSERT_EQ(cache.insert("A", payload), ARC::Status::success);
+    payload.reset();
+    ASSERT_FALSE(observer.expired());
+
+    const std::shared_ptr<int>* data = nullptr;
+    ASSERT_EQ(cache.get("A", data), ARC::Status::success);
+    ASSERT_NE(data, nullptr);
+    const auto* saved = data;
+    ASSERT_EQ(cache.insert("A", std::make_shared<int>(7)), ARC::Status::success);
+    EXPECT_TRUE(observer.expired()) << "update retained old payload";
+    ASSERT_EQ(cache.get("A", data), ARC::Status::success);
+    ASSERT_NE(data, nullptr);
+    EXPECT_EQ(data, saved) << "update changed the resident data address";
+    ASSERT_TRUE(*data);
+    EXPECT_EQ(**data, 7);
 }
 
 TEST(ARC, empty_key_and_value) {

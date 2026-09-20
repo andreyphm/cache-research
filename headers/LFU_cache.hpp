@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <functional>
 #include <iterator>
 #include <list>
 #include <memory>
@@ -57,6 +58,18 @@ public:
         data = std::addressof(page->data_);
 
         return Status::success;
+    }
+
+    [[nodiscard]] Data get(const std::string& url, const std::function<Data(const std::string&)>& slow_get_page) {
+        const Data* data = nullptr;
+        if (get(url, data) == Status::success) {
+            return *data;
+        }
+
+        Data loaded = slow_get_page(url);
+        (void)insert(url, loaded);
+
+        return loaded;
     }
 
 private:

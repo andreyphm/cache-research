@@ -39,9 +39,10 @@ public:
 
         auto& location = found->second;
         if (is_ghost(location.list_id_)) {
-            restore_from_ghost(location, data);
+            restore_from_ghost(location);
         }
 
+        location.iterator_->data_ = data;
         move_to_t2(location);
 
         return Status::success;
@@ -116,7 +117,7 @@ private:
         location.list_id_ = ListId::T2_;
     }
 
-    void restore_from_ghost(PageLocation& location, const Data& data) {
+    void restore_from_ghost(PageLocation& location) {
         const bool is_b2_hit = location.list_id_ == ListId::B2_;
         if (is_b2_hit) {
             if (target_t1_size_ > 0) {
@@ -127,7 +128,6 @@ private:
         }
 
         evict_to_ghost(is_b2_hit);
-        location.iterator_->data_ = data;
     }
 
     void make_space_for_insert() {

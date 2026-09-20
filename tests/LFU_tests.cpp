@@ -1,46 +1,37 @@
 #include "LFU_cache.hpp"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
-#include <cstdlib>
-#include <exception>
-#include <iostream>
 #include <memory>
-#include <stdexcept>
 #include <string>
-#include <string_view>
 #include <unordered_map>
 
 namespace Tests {
 
 using StringCache = LFU::Cache<std::string>;
 
-void require(bool condition, const std::string& message) {
-    if (!condition) {
-        throw std::runtime_error(message);
-    }
-}
-
 void insert(StringCache& cache, const std::string& key,
             const std::string& value) {
-    require(cache.insert(key, value) == LFU::Status::success,
-            "insert failed: " + key);
+    ASSERT_EQ(cache.insert(key, value), LFU::Status::success) << "insert failed: " + key;
 }
 
 const std::string* expect_hit(StringCache& cache, const std::string& key,
                               const std::string& expected) {
     const std::string* data = nullptr;
-    require(cache.get(key, data) == LFU::Status::success, "expected hit: " + key);
-    require(data != nullptr, "hit returned null: " + key);
-    require(*data == expected, "unexpected data: " + key);
+    EXPECT_EQ(cache.get(key, data), LFU::Status::success) << "expected hit: " << key;
+    EXPECT_NE(data, nullptr) << "hit returned null: " << key;
+    if (data != nullptr) {
+        EXPECT_EQ(*data, expected) << "unexpected data: " << key;
+    }
     return data;
 }
 
 void expect_miss(StringCache& cache, const std::string& key) {
     const std::string sentinel = "sentinel";
     const std::string* data = &sentinel;
-    require(cache.get(key, data) == LFU::Status::not_found,
-            "expected miss: " + key);
-    require(data == nullptr, "miss did not clear pointer: " + key);
+    ASSERT_EQ(cache.get(key, data), LFU::Status::not_found) << "expected miss: " + key;
+    ASSERT_EQ(data, nullptr) << "miss did not clear pointer: " + key;
 }
 
 void fill(StringCache& cache) {
@@ -49,23 +40,22 @@ void fill(StringCache& cache) {
     }
 }
 
-void empty_cache() {
+TEST(LFU, empty_cache) {
     StringCache cache;
     expect_miss(cache, "missing");
     expect_miss(cache, "");
 }
 
-void miss_clears_pointer() {
+TEST(LFU, miss_clears_pointer) {
     StringCache cache;
     insert(cache, "A", "value-A");
     const auto* data = expect_hit(cache, "A", "value-A");
-    require(cache.get("missing", data) == LFU::Status::not_found,
-            "unknown key must miss");
-    require(data == nullptr, "miss retained previous hit pointer");
+    ASSERT_EQ(cache.get("missing", data), LFU::Status::not_found) << "unknown key must miss";
+    ASSERT_EQ(data, nullptr) << "miss retained previous hit pointer";
     expect_hit(cache, "A", "value-A");
 }
 
-void insert_and_get() {
+TEST(LFU, insert_and_get) {
     StringCache cache;
     fill(cache);
     for (const auto* key : {"A", "B", "C", "D"}) {
@@ -73,7 +63,7 @@ void insert_and_get() {
     }
 }
 
-void repeated_hit() {
+TEST(LFU, repeated_hit) {
     StringCache cache;
     insert(cache, "A", "value-A");
     for (int access = 0; access < 100; ++access) {
@@ -81,7 +71,7 @@ void repeated_hit() {
     }
 }
 
-void duplicate_updates_value() {
+TEST(LFU, duplicate_updates_value) {
     StringCache cache;
     insert(cache, "A", "original");
     insert(cache, "A", "replacement");
@@ -90,7 +80,7 @@ void duplicate_updates_value() {
     expect_hit(cache, "A", "");
 }
 
-void duplicate_promotes_page() {
+TEST(LFU, duplicate_promotes_page) {
     StringCache cache;
     fill(cache);
     insert(cache, "A", "updated-A");
@@ -102,7 +92,7 @@ void duplicate_promotes_page() {
     }
 }
 
-void duplicate_at_capacity() {
+TEST(LFU, duplicate_at_capacity) {
     StringCache cache;
     fill(cache);
     insert(cache, "B", "updated-B");
@@ -112,14 +102,14 @@ void duplicate_at_capacity() {
     expect_hit(cache, "B", "updated-B");
 }
 
-void empty_key_and_value() {
+TEST(LFU, empty_key_and_value) {
     StringCache cache;
     insert(cache, "", "");
     expect_hit(cache, "", "");
     expect_miss(cache, "different");
 }
 
-void embedded_null_key() {
+TEST(LFU, embedded_null_key) {
     StringCache cache;
     const std::string key("a\0b", 3);
     const std::string value("x\0y", 3);
@@ -129,15 +119,17 @@ void embedded_null_key() {
     expect_hit(cache, "a", "prefix");
 }
 
-void integer_data() {
+TEST(LFU, integer_data) {
     LFU::Cache<int> cache;
-    require(cache.insert("zero", 0) == LFU::Status::success, "insert integer");
-    require(cache.insert("negative", -42) == LFU::Status::success, "insert negative");
+    ASSERT_EQ(cache.insert("zero", 0), LFU::Status::success) << "insert integer";
+    ASSERT_EQ(cache.insert("negative", -42), LFU::Status::success) << "insert negative";
     const int* data = nullptr;
-    require(cache.get("zero", data) == LFU::Status::success, "get zero");
-    require(data != nullptr && *data == 0, "zero is a present value");
-    require(cache.get("negative", data) == LFU::Status::success, "get negative");
-    require(data != nullptr && *data == -42, "negative value mismatch");
+    ASSERT_EQ(cache.get("zero", data), LFU::Status::success) << "get zero";
+    ASSERT_NE(data, nullptr) << "zero is a present value";
+    ASSERT_EQ(*data, 0) << "zero is a present value";
+    ASSERT_EQ(cache.get("negative", data), LFU::Status::success) << "get negative";
+    ASSERT_NE(data, nullptr) << "negative value mismatch";
+    ASSERT_EQ(*data, -42) << "negative value mismatch";
 }
 
 struct Payload {
@@ -145,16 +137,17 @@ struct Payload {
     int value_;
 };
 
-void non_default_data() {
+TEST(LFU, non_default_data) {
     LFU::Cache<Payload> cache;
-    require(cache.insert("A", Payload{42}) == LFU::Status::success,
-            "insert non-default-constructible data");
+    ASSERT_EQ(cache.insert("A", Payload{42}), LFU::Status::success)
+        << "insert non-default-constructible data";
     const Payload* data = nullptr;
-    require(cache.get("A", data) == LFU::Status::success, "get payload");
-    require(data != nullptr && data->value_ == 42, "payload mismatch");
+    ASSERT_EQ(cache.get("A", data), LFU::Status::success) << "get payload";
+    ASSERT_NE(data, nullptr) << "payload mismatch";
+    ASSERT_EQ(data->value_, 42) << "payload mismatch";
 }
 
-void independent_caches() {
+TEST(LFU, independent_caches) {
     StringCache first;
     StringCache second;
     insert(first, "A", "first");
@@ -164,28 +157,28 @@ void independent_caches() {
     expect_hit(second, "A", "second");
 }
 
-void pointer_survives_promotion() {
+TEST(LFU, pointer_survives_promotion) {
     StringCache cache;
     fill(cache);
     const auto* saved = expect_hit(cache, "A", "value-A");
     expect_hit(cache, "B", "value-B");
-    require(expect_hit(cache, "A", "value-A") == saved,
-            "promotion changed the resident data address");
+    ASSERT_EQ(expect_hit(cache, "A", "value-A"), saved)
+        << "promotion changed the resident data address";
     insert(cache, "E", "value-E");
-    require(expect_hit(cache, "A", "value-A") == saved,
-            "eviction of another page changed the resident data address");
+    ASSERT_EQ(expect_hit(cache, "A", "value-A"), saved)
+        << "eviction of another page changed the resident data address";
 }
 
-void pointer_survives_update() {
+TEST(LFU, pointer_survives_update) {
     StringCache cache;
     insert(cache, "A", "original");
     const auto* saved = expect_hit(cache, "A", "original");
     insert(cache, "A", "replacement");
-    require(expect_hit(cache, "A", "replacement") == saved,
-            "update changed the resident data address");
+    ASSERT_EQ(expect_hit(cache, "A", "replacement"), saved)
+        << "update changed the resident data address";
 }
 
-void sequential_eviction() {
+TEST(LFU, sequential_eviction) {
     StringCache cache;
     for (int key = 0; key < 40; ++key) {
         insert(cache, std::to_string(key), "value-" + std::to_string(key));
@@ -198,7 +191,7 @@ void sequential_eviction() {
     }
 }
 
-void promotion_protects_page() {
+TEST(LFU, promotion_protects_page) {
     StringCache cache;
     fill(cache);
     expect_hit(cache, "A", "value-A");
@@ -209,7 +202,7 @@ void promotion_protects_page() {
     }
 }
 
-void frequency_beats_recency() {
+TEST(LFU, frequency_beats_recency) {
     StringCache cache;
     fill(cache);
     expect_hit(cache, "A", "value-A");
@@ -224,7 +217,7 @@ void frequency_beats_recency() {
     }
 }
 
-void equal_frequency_uses_recency() {
+TEST(LFU, equal_frequency_uses_recency) {
     StringCache cache;
     fill(cache);
     expect_hit(cache, "A", "value-A");
@@ -239,7 +232,7 @@ void equal_frequency_uses_recency() {
     expect_hit(cache, "F", "value-F");
 }
 
-void all_pages_frequent_reject_new_page() {
+TEST(LFU, all_pages_frequent_reject_new_page) {
     StringCache cache;
     fill(cache);
     for (const auto* key : {"A", "B", "C", "D"}) {
@@ -254,7 +247,7 @@ void all_pages_frequent_reject_new_page() {
     }
 }
 
-void misses_do_not_change_eviction() {
+TEST(LFU, misses_do_not_change_eviction) {
     StringCache cache;
     fill(cache);
     for (int attempt = 0; attempt < 10; ++attempt) {
@@ -270,7 +263,7 @@ void misses_do_not_change_eviction() {
     }
 }
 
-void reload_resets_frequency() {
+TEST(LFU, reload_resets_frequency) {
     StringCache cache;
     fill(cache);
     insert(cache, "E", "value-E");
@@ -285,66 +278,67 @@ void reload_resets_frequency() {
     expect_hit(cache, "A", "latest-A");
 }
 
-void eviction_releases_data() {
+TEST(LFU, eviction_releases_data) {
     LFU::Cache<std::shared_ptr<int>> cache;
     auto payload = std::make_shared<int>(42);
     const std::weak_ptr<int> observer = payload;
-    require(cache.insert("A", payload) == LFU::Status::success, "insert payload");
+    ASSERT_EQ(cache.insert("A", payload), LFU::Status::success) << "insert payload";
     payload.reset();
     for (const auto* key : {"B", "C", "D"}) {
-        require(cache.insert(key, std::make_shared<int>(1)) == LFU::Status::success,
-                "fill shared data cache");
+        ASSERT_EQ(cache.insert(key, std::make_shared<int>(1)), LFU::Status::success)
+            << "fill shared data cache";
     }
-    require(!observer.expired(), "resident data disappeared");
-    require(cache.insert("E", std::make_shared<int>(2)) == LFU::Status::success,
-            "insert E");
-    require(observer.expired(), "evicted entry retained its payload");
+    ASSERT_FALSE(observer.expired()) << "resident data disappeared";
+    ASSERT_EQ(cache.insert("E", std::make_shared<int>(2)), LFU::Status::success) << "insert E";
+    ASSERT_TRUE(observer.expired()) << "evicted entry retained its payload";
 }
 
-void update_releases_old_data() {
+TEST(LFU, update_releases_old_data) {
     LFU::Cache<std::shared_ptr<int>> cache;
     auto payload = std::make_shared<int>(42);
     const std::weak_ptr<int> observer = payload;
-    require(cache.insert("A", payload) == LFU::Status::success, "insert payload");
+    ASSERT_EQ(cache.insert("A", payload), LFU::Status::success) << "insert payload";
     payload.reset();
-    require(!observer.expired(), "cache did not retain payload");
-    require(cache.insert("A", std::make_shared<int>(7)) == LFU::Status::success,
-            "update payload");
-    require(observer.expired(), "update retained old payload");
+    ASSERT_FALSE(observer.expired()) << "cache did not retain payload";
+    ASSERT_EQ(cache.insert("A", std::make_shared<int>(7)), LFU::Status::success)
+        << "update payload";
+    ASSERT_TRUE(observer.expired()) << "update retained old payload";
     const std::shared_ptr<int>* data = nullptr;
-    require(cache.get("A", data) == LFU::Status::success, "get updated payload");
-    require(data != nullptr && *data && **data == 7, "updated payload mismatch");
+    ASSERT_EQ(cache.get("A", data), LFU::Status::success) << "get updated payload";
+    ASSERT_NE(data, nullptr) << "updated payload mismatch";
+    ASSERT_TRUE(*data) << "updated payload mismatch";
+    ASSERT_EQ(**data, 7) << "updated payload mismatch";
 }
 
-void rejected_insert_releases_data() {
+TEST(LFU, rejected_insert_releases_data) {
     LFU::Cache<std::shared_ptr<int>> cache;
     for (const auto* key : {"A", "B", "C", "D"}) {
-        require(cache.insert(key, std::make_shared<int>(1)) == LFU::Status::success,
-                "fill shared data cache");
+        ASSERT_EQ(cache.insert(key, std::make_shared<int>(1)), LFU::Status::success)
+            << "fill shared data cache";
         const std::shared_ptr<int>* data = nullptr;
-        require(cache.get(key, data) == LFU::Status::success, "promote resident");
+        ASSERT_EQ(cache.get(key, data), LFU::Status::success) << "promote resident";
     }
     auto payload = std::make_shared<int>(42);
     const std::weak_ptr<int> observer = payload;
-    require(cache.insert("E", payload) == LFU::Status::success, "insert candidate");
+    ASSERT_EQ(cache.insert("E", payload), LFU::Status::success) << "insert candidate";
     payload.reset();
-    require(observer.expired(), "rejected entry retained its payload");
+    ASSERT_TRUE(observer.expired()) << "rejected entry retained its payload";
     const std::shared_ptr<int>* data = nullptr;
-    require(cache.get("E", data) == LFU::Status::not_found, "candidate must miss");
-    require(data == nullptr, "rejected entry returned a pointer");
+    ASSERT_EQ(cache.get("E", data), LFU::Status::not_found) << "candidate must miss";
+    ASSERT_EQ(data, nullptr) << "rejected entry returned a pointer";
 }
 
-void destruction_releases_data() {
+TEST(LFU, destruction_releases_data) {
     std::weak_ptr<int> observer;
     {
         LFU::Cache<std::shared_ptr<int>> cache;
         auto payload = std::make_shared<int>(42);
         observer = payload;
-        require(cache.insert("A", payload) == LFU::Status::success, "insert payload");
+        ASSERT_EQ(cache.insert("A", payload), LFU::Status::success) << "insert payload";
         payload.reset();
-        require(!observer.expired(), "cache did not retain payload");
+        ASSERT_FALSE(observer.expired()) << "cache did not retain payload";
     }
-    require(observer.expired(), "cache destruction retained payload");
+    ASSERT_TRUE(observer.expired()) << "cache destruction retained payload";
 }
 
 class Workload {
@@ -402,7 +396,7 @@ private:
     std::size_t clock_ = 0;
 };
 
-void repeated_reloads() {
+TEST(LFU, repeated_reloads) {
     Workload workload;
     for (int cycle = 0; cycle < 100; ++cycle) {
         for (const auto* key : {"A", "B", "C", "D", "E", "A", "F", "B"}) {
@@ -414,7 +408,7 @@ void repeated_reloads() {
     }
 }
 
-void mixed_workload() {
+TEST(LFU, mixed_workload) {
     Workload workload;
     std::uint32_t state = 0x12345678U;
     for (int step = 0; step < 4000; ++step) {
@@ -431,7 +425,7 @@ void mixed_workload() {
     }
 }
 
-void hot_and_cold_workload() {
+TEST(LFU, hot_and_cold_workload) {
     Workload workload;
     for (int step = 0; step < 200; ++step) {
         workload.access("hot-A");
@@ -444,65 +438,4 @@ void hot_and_cold_workload() {
     }
 }
 
-struct TestCase {
-    std::string_view name_;
-    void (*run_)();
-};
-
-constexpr TestCase test_cases[] = {
-    {"empty_cache", empty_cache},
-    {"miss_clears_pointer", miss_clears_pointer},
-    {"insert_and_get", insert_and_get},
-    {"repeated_hit", repeated_hit},
-    {"duplicate_updates_value", duplicate_updates_value},
-    {"duplicate_promotes_page", duplicate_promotes_page},
-    {"duplicate_at_capacity", duplicate_at_capacity},
-    {"empty_key_and_value", empty_key_and_value},
-    {"embedded_null_key", embedded_null_key},
-    {"integer_data", integer_data},
-    {"non_default_data", non_default_data},
-    {"independent_caches", independent_caches},
-    {"pointer_survives_promotion", pointer_survives_promotion},
-    {"pointer_survives_update", pointer_survives_update},
-    {"sequential_eviction", sequential_eviction},
-    {"promotion_protects_page", promotion_protects_page},
-    {"frequency_beats_recency", frequency_beats_recency},
-    {"equal_frequency_uses_recency", equal_frequency_uses_recency},
-    {"all_pages_frequent_reject_new_page", all_pages_frequent_reject_new_page},
-    {"misses_do_not_change_eviction", misses_do_not_change_eviction},
-    {"reload_resets_frequency", reload_resets_frequency},
-    {"eviction_releases_data", eviction_releases_data},
-    {"update_releases_old_data", update_releases_old_data},
-    {"rejected_insert_releases_data", rejected_insert_releases_data},
-    {"destruction_releases_data", destruction_releases_data},
-    {"repeated_reloads", repeated_reloads},
-    {"mixed_workload", mixed_workload},
-    {"hot_and_cold_workload", hot_and_cold_workload},
-};
-
 } // namespace Tests
-
-int main(int argc, char* argv[]) {
-    if (argc != 2) {
-        std::cerr << "Usage: lfu_tests <test_name>\nAvailable tests:\n";
-        for (const auto& test_case : Tests::test_cases) {
-            std::cerr << "  " << test_case.name_ << '\n';
-        }
-        return EXIT_FAILURE;
-    }
-
-    for (const auto& test_case : Tests::test_cases) {
-        if (test_case.name_ == argv[1]) {
-            try {
-                test_case.run_();
-                std::cout << "PASS: " << test_case.name_ << '\n';
-                return EXIT_SUCCESS;
-            } catch (const std::exception& error) {
-                std::cerr << "FAIL: " << test_case.name_ << ": " << error.what() << '\n';
-                return EXIT_FAILURE;
-            }
-        }
-    }
-    std::cerr << "Unknown test: " << argv[1] << '\n';
-    return EXIT_FAILURE;
-}

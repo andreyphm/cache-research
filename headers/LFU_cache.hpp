@@ -7,14 +7,12 @@
 #include <string>
 #include <unordered_map>
 #include <utility>
-#include <vector>
 
 namespace LFU {
 
 enum class Status {
     success,
-    not_found,
-    already_exists
+    not_found
 };
 
 template <typename Data> class Cache {
@@ -27,23 +25,20 @@ public:
 
     [[nodiscard]] Status insert(const std::string& url, Data data) {
         const auto found = map_.find(url);
-        if (found == map_.end()) {
-            const auto lfu_is_full = (pages_.size() == capacity);
-            const auto added = pages_.emplace(pages_.end(), url, data);
-            const auto result = map_.emplace(added->url_, added);
-            if (!result.second) {
-                pages_.erase(added);
-                return Status::already_exists;
-            }
-            promote(added);
-            if (lfu_is_full) {
-                evict(std::prev(pages_.end()));
-            }
-        } else {
+        if (found != map_.end()) {
             const auto page = found->second;
             page->data_ = data;
             ++page->frequency_;
             promote(page);
+            return Status::success;
+        }
+
+        const auto added = pages_.emplace(pages_.end(), url, data);
+        map_.emplace(added->url_, added);
+
+        promote(added);
+        if (pages_.size() > capacity) {
+            evict(std::prev(pages_.end()));
         }
 
         return Status::success;
@@ -82,7 +77,8 @@ private:
 
     void promote(PageIterator page) {
         auto destination = page;
-        while (destination != pages_.begin() && std::prev(destination)->frequency_ <= page->frequency_) {
+        while (destination != pages_.begin()
+               && std::prev(destination)->frequency_ <= page->frequency_) {
             --destination;
         }
         if (destination != page) {

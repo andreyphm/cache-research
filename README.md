@@ -124,14 +124,6 @@ ctest --test-dir build --output-on-failure
 (cd build && ctest --output-on-failure)
 ```
 
-### Сборка и запуск тестов для конкретного кэша
-
-```bash
-cmake --build build --target test_ARC
-cmake --build build --target test_LFU
-cmake --build build --target test_2Q
-```
-
 ## Структура проекта
 
 ```text

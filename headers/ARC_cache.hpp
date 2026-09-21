@@ -9,13 +9,13 @@
 #include <unordered_map>
 #include <utility>
 #include <optional>
-#include <array>
 
 namespace ARC {
 
 enum class Status {
     success,
-    not_found
+    not_found,
+    found_in_ghost
 };
 
 template <typename Data> class Cache {
@@ -26,57 +26,25 @@ public:
     Cache(const Cache&) = delete;
     Cache& operator=(const Cache&) = delete;
 
-    [[nodiscard]] Status insert(const std::string& url, Data data) {
-        const auto found = map_.find(url);
-        if (found == map_.end()) {
-            make_space_for_insert();
+    [[nodiscard]] Data fetch(const std::string& url, const std::function<Data(const std::string&)>& slow_get_page) {
+        PageLocation* location = nullptr;
+        switch (find(url, location)) {
+            case Status::success:
+                return *location->iterator_->data_;
 
-            auto& list_t1 = get_list(ListId::T1_);
-            const auto added = list_t1.emplace(list_t1.begin(), url, data);
-            map_.emplace(added->url_, PageLocation{ListId::T1_, added});
+            case Status::found_in_ghost: {
+                Data loaded = slow_get_page(url);
+                location->iterator_->data_ = loaded;
+                restore_from_ghost(*location);
+                return loaded;
+            }
 
-            return Status::success;
-        }
-
-        auto& location = found->second;
-        if (is_ghost(location.list_id_)) {
-            restore_from_ghost(location);
-        }
-
-        location.iterator_->data_ = data;
-        move_to_t2(location);
-
-        return Status::success;
-    }
-
-    [[nodiscard]] Status get(const std::string& url, const Data*& data) {
-        data = nullptr;
-
-        const auto found = map_.find(url);
-        if (found == map_.end()) {
-            return Status::not_found;
-        }
-
-        auto& location = found->second;
-        if (is_ghost(location.list_id_)) {
-            return Status::not_found;
-        }
-
-        move_to_t2(location);
-
-        data = std::addressof(*location.iterator_->data_);
-
-        return Status::success;
-    }
-
-    [[nodiscard]] Data get(const std::string& url, const std::function<Data(const std::string&)>& slow_get_page) {
-        const Data* data = nullptr;
-        if (get(url, data) == Status::success) {
-            return *data;
+            case Status::not_found:
+                break;
         }
 
         Data loaded = slow_get_page(url);
-        (void)insert(url, loaded);
+        insert(url, loaded);
 
         return loaded;
     }
@@ -96,42 +64,54 @@ private:
     using PageList = std::list<Page>;
     using PageIterator = PageList::iterator;
 
-    enum class ListId {
-        T1_,
-        T2_,
-        B1_,
-        B2_
-    };
-
     struct PageLocation {
-        ListId list_id_;
+        PageList* list_;
         PageIterator iterator_;
     };
 
     std::size_t target_t1_size_ = capacity / 2;
-    static constexpr std::size_t number_of_lists_ = 4;
 
-    std::array<PageList, number_of_lists_> lists_;
+    PageList list_t1_;
+    PageList list_t2_;
+    PageList list_b1_;
+    PageList list_b2_;
     std::unordered_map<std::string, PageLocation> map_;
 
-    PageList& get_list(ListId id) {
-        return lists_[static_cast<std::size_t>(id)];
+    void insert(const std::string& url, Data data) {
+        make_space_for_insert();
+
+        const auto added = list_t1_.emplace(list_t1_.begin(), url, data);
+        map_.emplace(added->url_, PageLocation{&list_t1_, added});
     }
 
-    bool is_ghost(ListId id) {
-        return id == ListId::B1_ || id == ListId::B2_;
+    [[nodiscard]] Status find(const std::string& url, PageLocation*& location) {
+        location = nullptr;
+        const auto found = map_.find(url);
+        if (found == map_.end()) {
+            return Status::not_found;
+        }
+
+        location = std::addressof(found->second);
+        if (is_ghost(*location->list_)) {
+            return Status::found_in_ghost;
+        }
+
+        move_to_t2(*location);
+
+        return Status::success;
+    }
+
+    bool is_ghost(const PageList& list) const {
+        return &list == &list_b1_ || &list == &list_b2_;
     }
 
     void move_to_t2(PageLocation& location) {
-        auto& t2 = get_list(ListId::T2_);
-        auto& source = get_list(location.list_id_);
-
-        t2.splice(t2.begin(), source, location.iterator_);
-        location.list_id_ = ListId::T2_;
+        list_t2_.splice(list_t2_.begin(), *location.list_, location.iterator_);
+        location.list_ = &list_t2_;
     }
 
     void restore_from_ghost(PageLocation& location) {
-        const bool is_b2_hit = location.list_id_ == ListId::B2_;
+        bool is_b2_hit = location.list_ == &list_b2_;
         if (is_b2_hit) {
             if (target_t1_size_ > 0) {
                 --target_t1_size_;
@@ -140,21 +120,19 @@ private:
             ++target_t1_size_;
         }
 
-        evict_to_ghost(is_b2_hit);
+        replace(*location.list_);
+        move_to_t2(location);
     }
 
     void make_space_for_insert() {
-        auto& t1 = get_list(ListId::T1_);
-        auto& b1 = get_list(ListId::B1_);
-
-        if (t1.size() + b1.size() == capacity) {
-            if (t1.size() == capacity) {
-                evict_oldest(t1);
+        if (list_t1_.size() + list_b1_.size() == capacity) {
+            if (list_t1_.size() == capacity) {
+                evict_oldest(list_t1_);
                 return;
             }
 
-            evict_oldest(b1);
-            evict_to_ghost(false);
+            evict_oldest(list_b1_);
+            replace(list_b1_);
             return;
         }
 
@@ -164,28 +142,32 @@ private:
         }
 
         if (total_size == 2 * capacity) {
-            evict_oldest(get_list(ListId::B2_));
+            evict_oldest(list_b2_);
         }
 
-        evict_to_ghost(false);
+        replace(list_b1_);
     }
 
-    void evict_to_ghost(bool is_b2_hit) {
-        auto& list_t1 = get_list(ListId::T1_);
+    void replace(const PageList& origin) {
+        if (list_t1_.empty()) {
+            evict_to_ghost(list_t2_, list_b2_);
+            return;
+        }
 
-        const bool evict_from_t1 = !list_t1.empty() && (list_t1.size() > target_t1_size_
-                                   || (is_b2_hit && list_t1.size() == target_t1_size_));
+        const auto size = list_t1_.size();
+        if (size > target_t1_size_ || (&origin == &list_b2_ && size == target_t1_size_)) {
+            evict_to_ghost(list_t1_, list_b1_);
+        } else {
+            evict_to_ghost(list_t2_, list_b2_);
+        }
+    }
 
-        const auto source_id = evict_from_t1 ? ListId::T1_ : ListId::T2_;
-        const auto ghost_id = evict_from_t1 ? ListId::B1_ : ListId::B2_;
-
-        auto& source = get_list(source_id);
-        auto& ghost = get_list(ghost_id);
+    void evict_to_ghost(PageList& source, PageList& ghost) {
         const auto page = std::prev(source.end());
 
         page->data_.reset();
         ghost.splice(ghost.begin(), source, page);
-        map_.at(page->url_).list_id_ = ghost_id;
+        map_.at(page->url_).list_ = &ghost;
     }
 
     void evict(PageList& list, PageIterator page) {

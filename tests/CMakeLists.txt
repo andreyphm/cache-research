@@ -23,13 +23,4 @@ foreach(cache IN ITEMS ARC LFU 2Q)
 
     target_compile_options(${cache}_tests PRIVATE -Wall -Wextra -Wpedantic)
     gtest_discover_tests(${cache}_tests PROPERTIES TIMEOUT 10 LABELS "${cache}")
-
-    add_custom_target(test_${cache}
-        COMMAND "${CMAKE_CTEST_COMMAND}" -C "$<CONFIG>"
-            --output-on-failure -L "^${cache}$"
-        DEPENDS ${cache}_tests
-        WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
-        USES_TERMINAL
-        VERBATIM
-    )
 endforeach()

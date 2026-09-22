@@ -5,192 +5,182 @@
 #include <algorithm>
 #include <deque>
 #include <cstdint>
+#include <functional>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
 
 namespace Tests {
+namespace {
 
 using StringCache = TWO_Q::Cache<std::string>;
 
-void insert(StringCache& cache, const std::string& key,
-            const std::string& value) {
-    ASSERT_EQ(cache.insert(key, value), TWO_Q::Status::success) << "insert failed: " + key;
+// A miss is observable only through the loader; fetch also inserts the result.
+void expect_load(StringCache& cache, const std::string& key,
+                 const std::string& value) {
+    int calls = 0;
+    EXPECT_EQ(cache.fetch(key, [&](const std::string& url) {
+        ++calls;
+        EXPECT_EQ(url, key);
+        return value;
+    }), value);
+    EXPECT_EQ(calls, 1) << "expected load: " << key;
 }
 
-const std::string* expect_hit(StringCache& cache, const std::string& key,
-                              const std::string& expected) {
-    const std::string* data = nullptr;
-    EXPECT_EQ(cache.get(key, data), TWO_Q::Status::success) << "expected hit: " << key;
-    EXPECT_NE(data, nullptr) << "hit returned null: " << key;
-    if (data != nullptr) {
-        EXPECT_EQ(*data, expected) << "unexpected data: " << key;
-    }
-    return data;
+void expect_hit(StringCache& cache, const std::string& key,
+                const std::string& value) {
+    int calls = 0;
+    EXPECT_EQ(cache.fetch(key, [&](const std::string&) {
+        ++calls;
+        return std::string("unexpected load");
+    }), value);
+    EXPECT_EQ(calls, 0) << "expected hit: " << key;
 }
+
+// A throwing loader observes a miss without inserting or changing ghost history.
+struct LoadStopped {};
 
 void expect_miss(StringCache& cache, const std::string& key) {
-    const std::string sentinel = "sentinel";
-    const std::string* data = &sentinel;
-    ASSERT_EQ(cache.get(key, data), TWO_Q::Status::not_found) << "expected miss: " + key;
-    ASSERT_EQ(data, nullptr) << "miss did not clear pointer: " + key;
+    int calls = 0;
+    EXPECT_THROW((void)cache.fetch(key, [&](const std::string& url) -> std::string {
+        ++calls;
+        EXPECT_EQ(url, key);
+        throw LoadStopped{};
+    }), LoadStopped);
+    EXPECT_EQ(calls, 1) << "expected miss: " << key;
 }
 
 struct Payload {
     explicit Payload(int value) : value_(value) {}
     int value_;
 };
-
-TEST(TwoQ, empty_cache) {
-    StringCache cache;
-    expect_miss(cache, "missing");
-    expect_miss(cache, "");
+void fill(StringCache& cache) {
+    for (std::size_t key = 0; key < StringCache::capacity; ++key) {
+        expect_load(cache, std::to_string(key), "value-" + std::to_string(key));
+    }
 }
 
-TEST(TwoQ, miss_clears_pointer) {
+void fill_frequent(StringCache& cache) {
+    fill(cache);
+    expect_load(cache, "cold", "cold");
+    for (std::size_t key = 0; key < StringCache::capacity - StringCache::kin; ++key) {
+        expect_miss(cache, std::to_string(key));
+        expect_load(cache, std::to_string(key), "value-" + std::to_string(key));
+    }
+}
+
+TEST(TwoQ, miss_loads_and_caches_value) {
     StringCache cache;
-    insert(cache, "A", "value-A");
-    const auto* data = expect_hit(cache, "A", "value-A");
-    ASSERT_EQ(cache.get("missing", data), TWO_Q::Status::not_found) << "unknown key must miss";
-    ASSERT_EQ(data, nullptr) << "miss retained previous hit pointer";
-    expect_hit(cache, "A", "value-A");
+    expect_load(cache, "missing", "loaded");
+    expect_hit(cache, "missing", "loaded");
+}
+
+TEST(TwoQ, hit_does_not_replace_value) {
+    StringCache cache;
+    expect_load(cache, "A", "original");
+    EXPECT_EQ(cache.fetch("A", [](const std::string&) {
+        ADD_FAILURE() << "loader called for a resident page";
+        return std::string("replacement");
+    }), "original");
+    expect_hit(cache, "A", "original");
 }
 
 TEST(TwoQ, repeated_hit) {
     StringCache cache;
-    insert(cache, "A", "value-A");
+    expect_load(cache, "A", "value-A");
     for (int access = 0; access < 100; ++access) {
         expect_hit(cache, "A", "value-A");
     }
 }
 
-TEST(TwoQ, duplicate_updates_value) {
-    StringCache cache;
-    insert(cache, "A", "original");
-    insert(cache, "A", "replacement");
-    expect_hit(cache, "A", "replacement");
-    insert(cache, "A", "");
-    expect_hit(cache, "A", "");
-}
-
 TEST(TwoQ, empty_key_and_value) {
     StringCache cache;
-    insert(cache, "", "");
+    expect_load(cache, "", "");
     expect_hit(cache, "", "");
-    expect_miss(cache, "different");
 }
 
 TEST(TwoQ, embedded_null_key) {
     StringCache cache;
     const std::string key("a\0b", 3);
     const std::string value("x\0y", 3);
-    insert(cache, key, value);
-    insert(cache, "a", "prefix");
+    expect_load(cache, key, value);
+    expect_load(cache, "a", "prefix");
     expect_hit(cache, key, value);
     expect_hit(cache, "a", "prefix");
 }
 
 TEST(TwoQ, integer_data) {
     TWO_Q::Cache<int> cache;
-    ASSERT_EQ(cache.insert("zero", 0), TWO_Q::Status::success) << "insert integer";
-    ASSERT_EQ(cache.insert("negative", -42), TWO_Q::Status::success) << "insert negative";
-    const int* data = nullptr;
-    ASSERT_EQ(cache.get("zero", data), TWO_Q::Status::success) << "get zero";
-    ASSERT_NE(data, nullptr) << "zero is a present value";
-    ASSERT_EQ(*data, 0) << "zero is a present value";
-    ASSERT_EQ(cache.get("negative", data), TWO_Q::Status::success) << "get negative";
-    ASSERT_NE(data, nullptr) << "negative value mismatch";
-    ASSERT_EQ(*data, -42) << "negative value mismatch";
+    int calls = 0;
+    const auto loader = [&](const std::string& key) {
+        ++calls;
+        return key == "zero" ? 0 : -42;
+    };
+    for (int access = 0; access < 3; ++access) {
+        EXPECT_EQ(cache.fetch("zero", loader), 0);
+        EXPECT_EQ(cache.fetch("negative", loader), -42);
+    }
+    EXPECT_EQ(calls, 2);
 }
 
 TEST(TwoQ, non_default_data) {
     TWO_Q::Cache<Payload> cache;
-    ASSERT_EQ(cache.insert("A", Payload{42}), TWO_Q::Status::success)
-        << "insert non-default-constructible data";
-    const Payload* data = nullptr;
-    ASSERT_EQ(cache.get("A", data), TWO_Q::Status::success) << "get payload";
-    ASSERT_NE(data, nullptr) << "payload mismatch";
-    ASSERT_EQ(data->value_, 42) << "payload mismatch";
+    int calls = 0;
+    const auto loader = [&](const std::string&) {
+        ++calls;
+        return Payload{42};
+    };
+    EXPECT_EQ(cache.fetch("A", loader).value_, 42);
+    EXPECT_EQ(cache.fetch("A", loader).value_, 42);
+    EXPECT_EQ(calls, 1);
+}
+
+TEST(TwoQ, returned_value_is_a_copy) {
+    StringCache cache;
+    auto value = cache.fetch("A", [](const std::string&) {
+        return std::string("original");
+    });
+    value = "modified";
+    expect_hit(cache, "A", "original");
 }
 
 TEST(TwoQ, independent_caches) {
     StringCache first;
     StringCache second;
-    insert(first, "A", "first");
-    expect_miss(second, "A");
-    insert(second, "A", "second");
+    expect_load(first, "A", "first");
+    expect_load(second, "A", "second");
     expect_hit(first, "A", "first");
     expect_hit(second, "A", "second");
 }
 
-TEST(TwoQ, pointer_survives_update) {
+TEST(TwoQ, empty_loader_is_only_needed_on_miss) {
     StringCache cache;
-    insert(cache, "A", "original");
-    const auto* saved = expect_hit(cache, "A", "original");
-    insert(cache, "A", "replacement");
-    ASSERT_EQ(expect_hit(cache, "A", "replacement"), saved)
-        << "update changed the resident data address";
-}
-
-TEST(TwoQ, update_releases_old_data) {
-    TWO_Q::Cache<std::shared_ptr<int>> cache;
-    auto payload = std::make_shared<int>(42);
-    const std::weak_ptr<int> observer = payload;
-    ASSERT_EQ(cache.insert("A", payload), TWO_Q::Status::success) << "insert payload";
-    payload.reset();
-    ASSERT_FALSE(observer.expired()) << "cache did not retain payload";
-    ASSERT_EQ(cache.insert("A", std::make_shared<int>(7)), TWO_Q::Status::success)
-        << "update payload";
-    ASSERT_TRUE(observer.expired()) << "update retained old payload";
-    const std::shared_ptr<int>* data = nullptr;
-    ASSERT_EQ(cache.get("A", data), TWO_Q::Status::success) << "get updated payload";
-    ASSERT_NE(data, nullptr) << "updated payload mismatch";
-    ASSERT_TRUE(*data) << "updated payload mismatch";
-    ASSERT_EQ(**data, 7) << "updated payload mismatch";
+    expect_load(cache, "A", "value-A");
+    const std::function<std::string(const std::string&)> empty_loader;
+    EXPECT_EQ(cache.fetch("A", empty_loader), "value-A");
+    EXPECT_THROW((void)cache.fetch("missing", empty_loader), std::bad_function_call);
+    expect_load(cache, "missing", "loaded");
 }
 
 TEST(TwoQ, destruction_releases_data) {
     std::weak_ptr<int> observer;
     {
         TWO_Q::Cache<std::shared_ptr<int>> cache;
-        auto payload = std::make_shared<int>(42);
-        observer = payload;
-        ASSERT_EQ(cache.insert("A", payload), TWO_Q::Status::success) << "insert payload";
-        payload.reset();
-        ASSERT_FALSE(observer.expired()) << "cache did not retain payload";
+        (void)cache.fetch("A", [&](const std::string&) {
+            auto payload = std::make_shared<int>(42);
+            observer = payload;
+            return payload;
+        });
+        ASSERT_FALSE(observer.expired());
     }
-    ASSERT_TRUE(observer.expired()) << "cache destruction retained payload";
+    EXPECT_TRUE(observer.expired());
 }
 
-void fill(StringCache& cache) {
-    for (std::size_t key = 0; key < StringCache::capacity; ++key) {
-        insert(cache, std::to_string(key), "value-" + std::to_string(key));
-    }
-}
-
-void fill_frequent(StringCache& cache) {
-    fill(cache);
-    insert(cache, "cold", "cold");
-    for (std::size_t key = 0; key < StringCache::capacity - StringCache::kin; ++key) {
-        expect_miss(cache, std::to_string(key));
-        insert(cache, std::to_string(key), "value-" + std::to_string(key));
-    }
-}
-
-TEST(TwoQ, insert_and_get) {
+TEST(TwoQ, fetch_at_capacity) {
     StringCache cache;
     fill(cache);
     for (std::size_t key = 0; key < StringCache::capacity; ++key) {
-        expect_hit(cache, std::to_string(key), "value-" + std::to_string(key));
-    }
-}
-
-TEST(TwoQ, duplicate_at_capacity) {
-    StringCache cache;
-    fill(cache);
-    insert(cache, "0", "updated");
-    expect_hit(cache, "0", "updated");
-    for (std::size_t key = 1; key < StringCache::capacity; ++key) {
         expect_hit(cache, std::to_string(key), "value-" + std::to_string(key));
     }
 }
@@ -198,7 +188,7 @@ TEST(TwoQ, duplicate_at_capacity) {
 TEST(TwoQ, sequential_eviction) {
     StringCache cache;
     for (int key = 0; key < 40; ++key) {
-        insert(cache, std::to_string(key), "value-" + std::to_string(key));
+        expect_load(cache, std::to_string(key), "value-" + std::to_string(key));
     }
     for (std::size_t key = 0; key < 40 - StringCache::capacity; ++key) {
         expect_miss(cache, std::to_string(key));
@@ -214,16 +204,7 @@ TEST(TwoQ, a1in_hit_preserves_fifo) {
     for (int access = 0; access < 10; ++access) {
         expect_hit(cache, "0", "value-0");
     }
-    insert(cache, "new", "new");
-    expect_miss(cache, "0");
-    expect_hit(cache, "1", "value-1");
-}
-
-TEST(TwoQ, a1in_update_preserves_fifo) {
-    StringCache cache;
-    fill(cache);
-    insert(cache, "0", "updated");
-    insert(cache, "new", "new");
+    expect_load(cache, "new", "new");
     expect_miss(cache, "0");
     expect_hit(cache, "1", "value-1");
 }
@@ -231,7 +212,7 @@ TEST(TwoQ, a1in_update_preserves_fifo) {
 TEST(TwoQ, ghost_lookup_is_miss) {
     StringCache cache;
     fill(cache);
-    insert(cache, "new", "new");
+    expect_load(cache, "new", "new");
     for (int access = 0; access < 10; ++access) {
         expect_miss(cache, "0");
     }
@@ -240,13 +221,13 @@ TEST(TwoQ, ghost_lookup_is_miss) {
 TEST(TwoQ, ghost_reload_promotes_page) {
     StringCache cache;
     fill(cache);
-    insert(cache, "new", "new");
+    expect_load(cache, "new", "new");
     expect_miss(cache, "0");
-    insert(cache, "0", "reloaded");
+    expect_load(cache, "0", "reloaded");
     expect_hit(cache, "0", "reloaded");
     expect_miss(cache, "1");
     for (int key = 0; key < 40; ++key) {
-        insert(cache, "scan-" + std::to_string(key), "scan");
+        expect_load(cache, "scan-" + std::to_string(key), "scan");
     }
     expect_hit(cache, "0", "reloaded");
 }
@@ -255,12 +236,12 @@ TEST(TwoQ, forgotten_ghost_returns_to_a1in) {
     StringCache cache;
     fill(cache);
     for (std::size_t key = 0; key <= StringCache::kout; ++key) {
-        insert(cache, "scan-" + std::to_string(key), "scan");
+        expect_load(cache, "scan-" + std::to_string(key), "scan");
     }
-    insert(cache, "0", "reloaded");
+    expect_load(cache, "0", "reloaded");
     expect_hit(cache, "0", "reloaded");
     for (std::size_t key = 0; key < StringCache::capacity; ++key) {
-        insert(cache, "next-" + std::to_string(key), "next");
+        expect_load(cache, "next-" + std::to_string(key), "next");
     }
     expect_miss(cache, "0");
 }
@@ -268,14 +249,14 @@ TEST(TwoQ, forgotten_ghost_returns_to_a1in) {
 TEST(TwoQ, ghost_hit_preserves_fifo) {
     StringCache cache;
     fill(cache);
-    insert(cache, "first", "first");
+    expect_load(cache, "first", "first");
     for (std::size_t key = 0; key < StringCache::kout; ++key) {
         expect_miss(cache, "0");
-        insert(cache, "scan-" + std::to_string(key), "scan");
+        expect_load(cache, "scan-" + std::to_string(key), "scan");
     }
-    insert(cache, "0", "reloaded");
+    expect_load(cache, "0", "reloaded");
     for (std::size_t key = 0; key < StringCache::capacity; ++key) {
-        insert(cache, "next-" + std::to_string(key), "next");
+        expect_load(cache, "next-" + std::to_string(key), "next");
     }
     expect_miss(cache, "0");
 }
@@ -284,102 +265,138 @@ TEST(TwoQ, newest_ghost_survives_history_limit) {
     StringCache cache;
     fill(cache);
     for (std::size_t key = 0; key <= StringCache::kout; ++key) {
-        insert(cache, "scan-" + std::to_string(key), "scan");
+        expect_load(cache, "scan-" + std::to_string(key), "scan");
     }
     const auto key = std::to_string(StringCache::kout);
     expect_miss(cache, key);
-    insert(cache, key, "reloaded");
+    expect_load(cache, key, "reloaded");
     for (std::size_t index = 0; index < StringCache::capacity; ++index) {
-        insert(cache, "next-" + std::to_string(index), "next");
+        expect_load(cache, "next-" + std::to_string(index), "next");
     }
     expect_hit(cache, key, "reloaded");
-}
-
-TEST(TwoQ, kin_boundary_evicts_am) {
-    StringCache cache;
-    fill_frequent(cache);
-    insert(cache, "new", "new");
-    expect_miss(cache, "0");
-    expect_hit(cache, "1", "value-1");
-    expect_hit(cache, "7", "value-7");
-    expect_hit(cache, "cold", "cold");
-    insert(cache, "next", "next");
-    expect_miss(cache, "7");
-    expect_hit(cache, "cold", "cold");
-    expect_hit(cache, "1", "value-1");
-}
-
-TEST(TwoQ, am_hit_refreshes_recency) {
-    StringCache cache;
-    fill_frequent(cache);
-    expect_hit(cache, "0", "value-0");
-    insert(cache, "new", "new");
-    expect_miss(cache, "1");
-    expect_hit(cache, "0", "value-0");
-}
-
-TEST(TwoQ, am_update_refreshes_recency) {
-    StringCache cache;
-    fill_frequent(cache);
-    insert(cache, "0", "updated");
-    insert(cache, "new", "new");
-    expect_miss(cache, "1");
-    expect_hit(cache, "0", "updated");
 }
 
 TEST(TwoQ, ghost_reload_at_kin_evicts_am) {
     StringCache cache;
     fill_frequent(cache);
     expect_miss(cache, "6");
-    insert(cache, "6", "reloaded");
+    expect_load(cache, "6", "reloaded");
     expect_miss(cache, "0");
     expect_hit(cache, "6", "reloaded");
     expect_hit(cache, "7", "value-7");
     expect_hit(cache, "cold", "cold");
 }
 
-TEST(TwoQ, pointer_survives_am_hit) {
+TEST(TwoQ, oldest_ghost_reload_at_full_history_preserves_other_ghosts) {
     StringCache cache;
-    fill_frequent(cache);
-    const auto* saved = expect_hit(cache, "0", "value-0");
-    expect_hit(cache, "1", "value-1");
-    ASSERT_EQ(expect_hit(cache, "0", "value-0"), saved)
-        << "frequent hit changed the resident data address";
-    insert(cache, "new", "new");
-    ASSERT_EQ(expect_hit(cache, "0", "value-0"), saved)
-        << "eviction of another page changed the resident data address";
+    fill(cache);
+    for (std::size_t key = 0; key < StringCache::kout; ++key) {
+        expect_load(cache, "scan-" + std::to_string(key), "scan");
+    }
+
+    // Restoring the oldest ghost frees its history slot for the evicted page.
+    // Every other ghost must still be promoted on its next successful load.
+    for (std::size_t key = 0; key < StringCache::kout; ++key) {
+        expect_load(cache, std::to_string(key), "fresh-" + std::to_string(key));
+    }
+    for (std::size_t key = 0; key < 2 * StringCache::capacity; ++key) {
+        expect_load(cache, "next-" + std::to_string(key), "next");
+    }
+    for (std::size_t key = 0; key < StringCache::kout; ++key) {
+        expect_hit(cache, std::to_string(key), "fresh-" + std::to_string(key));
+    }
 }
 
-TEST(TwoQ, ghost_releases_data) {
-    TWO_Q::Cache<std::shared_ptr<int>> cache;
-    auto payload = std::make_shared<int>(42);
-    const std::weak_ptr<int> observer = payload;
-    ASSERT_EQ(cache.insert("0", payload), TWO_Q::Status::success) << "insert payload";
-    payload.reset();
-    for (std::size_t key = 1; key < StringCache::capacity; ++key) {
-        ASSERT_EQ(cache.insert(std::to_string(key), std::make_shared<int>(1)), TWO_Q::Status::success)
-            << "fill shared data cache";
+TEST(TwoQ, failed_ghost_reload_preserves_residents_and_promotion) {
+    StringCache cache;
+    fill_frequent(cache);
+    // A1in is at kin: a successful restore would evict the oldest Am page.
+    expect_miss(cache, "6");
+    expect_miss(cache, "6");
+    for (std::size_t key = 0; key < StringCache::capacity - StringCache::kin; ++key) {
+        expect_hit(cache, std::to_string(key), "value-" + std::to_string(key));
     }
-    ASSERT_FALSE(observer.expired()) << "resident data disappeared";
-    ASSERT_EQ(cache.insert("new", std::make_shared<int>(2)), TWO_Q::Status::success)
-        << "insert new payload";
-    ASSERT_TRUE(observer.expired()) << "ghost entry retained its payload";
-    const std::shared_ptr<int>* data = nullptr;
-    ASSERT_EQ(cache.get("0", data), TWO_Q::Status::not_found) << "ghost must miss";
-    ASSERT_EQ(data, nullptr) << "ghost returned a pointer";
-    ASSERT_EQ(cache.insert("0", std::make_shared<int>(7)), TWO_Q::Status::success)
-        << "reload payload";
-    ASSERT_EQ(cache.get("0", data), TWO_Q::Status::success) << "get reloaded payload";
-    ASSERT_NE(data, nullptr) << "reloaded payload mismatch";
-    ASSERT_TRUE(*data) << "reloaded payload mismatch";
-    ASSERT_EQ(**data, 7) << "reloaded payload mismatch";
+    expect_hit(cache, "7", "value-7");
+    expect_hit(cache, "cold", "cold");
+
+    expect_load(cache, "6", "recovered");
+    expect_miss(cache, "0");
+    for (std::size_t key = 0; key < StringCache::capacity; ++key) {
+        expect_load(cache, "scan-" + std::to_string(key), "scan");
+    }
+    expect_hit(cache, "6", "recovered");
+}
+
+TEST(TwoQ, evicted_am_page_reloads_into_a1in) {
+    StringCache cache;
+    fill_frequent(cache);
+    expect_load(cache, "6", "reloaded-6");
+    expect_load(cache, "0", "reloaded-0");
+    expect_hit(cache, "0", "reloaded-0");
+
+    // Am eviction leaves no ghost entry, so reloading 0 must not protect it
+    // from a sequential scan as a ghost promotion would.
+    for (std::size_t key = 0; key < StringCache::capacity; ++key) {
+        expect_load(cache, "scan-" + std::to_string(key), "scan");
+    }
+    expect_miss(cache, "0");
+    expect_hit(cache, "6", "reloaded-6");
+}
+
+TEST(TwoQ, loader_exception_preserves_residents) {
+    StringCache cache;
+    fill(cache);
+    expect_miss(cache, "failed-load");
+    expect_miss(cache, "failed-load");
+    for (std::size_t key = 0; key < StringCache::capacity; ++key) {
+        expect_hit(cache, std::to_string(key), "value-" + std::to_string(key));
+    }
+    expect_load(cache, "failed-load", "recovered");
+    expect_hit(cache, "failed-load", "recovered");
+}
+
+TEST(TwoQ, ghost_releases_data_and_reload_caches_fresh_value) {
+    TWO_Q::Cache<std::shared_ptr<int>> cache;
+    std::weak_ptr<int> observer;
+    (void)cache.fetch("0", [&](const std::string&) {
+        auto payload = std::make_shared<int>(42);
+        observer = payload;
+        return payload;
+    });
+    const auto loader = [](const std::string&) { return std::make_shared<int>(1); };
+    for (std::size_t key = 1; key < StringCache::capacity; ++key) {
+        (void)cache.fetch(std::to_string(key), loader);
+    }
+    (void)cache.fetch(std::to_string(StringCache::capacity - 1), loader);
+    ASSERT_FALSE(observer.expired());
+    (void)cache.fetch("new", loader);
+    EXPECT_TRUE(observer.expired()) << "ghost retained resident payload";
+    int calls = 0;
+    const auto reload = [&](const std::string&) {
+        ++calls;
+        return std::make_shared<int>(7);
+    };
+    auto result = cache.fetch("0", reload);
+    ASSERT_TRUE(result);
+    EXPECT_EQ(*result, 7);
+    EXPECT_EQ(cache.fetch("0", reload), result);
+    EXPECT_EQ(calls, 1);
+}
+
+TEST(TwoQ, am_hit_refreshes_recency) {
+    StringCache cache;
+    fill_frequent(cache);
+    expect_hit(cache, "0", "value-0");
+    expect_load(cache, "new", "new");
+    expect_miss(cache, "1");
+    expect_hit(cache, "0", "value-0");
 }
 
 class Workload {
 public:
     void put(const std::string& key) {
         const auto value = key + "-revision-" + std::to_string(revision_++);
-        insert(cache_, key, value);
+        expect_load(cache_, key, value);
         if (values_.contains(key)) {
             refresh_frequent(key);
         } else {
@@ -410,7 +427,6 @@ public:
     bool get(const std::string& key) {
         const auto found = values_.find(key);
         if (found == values_.end()) {
-            expect_miss(cache_, key);
             return false;
         }
         expect_hit(cache_, key, found->second);
@@ -419,9 +435,9 @@ public:
     }
 
     void access(const std::string& key) {
+        SCOPED_TRACE("access " + std::to_string(access_count_++) + ": " + key);
         if (!get(key)) {
             put(key);
-            get(key);
         }
     }
 
@@ -440,6 +456,7 @@ private:
     std::deque<std::string> frequent_;
     std::unordered_map<std::string, std::string> values_;
     std::size_t revision_ = 0;
+    std::size_t access_count_ = 0;
 };
 
 TEST(TwoQ, repeated_reloads) {
@@ -457,14 +474,7 @@ TEST(TwoQ, mixed_workload) {
     for (int step = 0; step < 4000; ++step) {
         state = state * 1664525U + 1013904223U;
         const auto key = std::to_string((state >> 16U) % 23U);
-        if ((state & 3U) == 0) {
-            workload.put(key);
-        } else {
-            workload.access(key);
-        }
-        for (int candidate = 0; candidate < 23; ++candidate) {
-            workload.get(std::to_string(candidate));
-        }
+        workload.access(key);
     }
 }
 
@@ -477,8 +487,9 @@ TEST(TwoQ, hot_and_cold_workload) {
         workload.access("hot-A");
     }
     for (int step = 0; step < 200; ++step) {
-        workload.get("cold-" + std::to_string(step));
+        workload.access("cold-" + std::to_string(step));
     }
 }
 
+} // namespace
 } // namespace Tests

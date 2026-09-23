@@ -68,12 +68,23 @@ private:
             const auto added = list_s_.emplace(list_s_.begin(), url);
             map_.emplace(added->url_, PageInfo{data, added});
             lir_count++;
-        } else {
-            make_space_in_queue();
-            const auto added_q = list_q_.emplace(list_q_.begin(), url);
-            const auto added_s = list_s_.emplace(list_s_.begin(), url);
-            map_.emplace(added_q->url_, PageInfo{data, added_s, added_q});
+            return;
         }
+        const auto found = map_.find(url);
+        if (found != map_.end()) {
+            auto& info = found->second;
+            info.data_ = data;
+            list_s_.splice(list_s_.begin(), list_s_, *info.s_iterator_);
+
+            last_lir_to_hir();
+            prune_stack();
+            return;
+        }
+        make_space_in_queue();
+
+        const auto added_q = list_q_.emplace(list_q_.begin(), url);
+        const auto added_s = list_s_.emplace(list_s_.begin(), url);
+        map_.emplace(added_q->url_, PageInfo{data, added_s, added_q});
     }
 
     [[nodiscard]] Status find(const std::string& url, PageInfo*& info) {
@@ -92,15 +103,17 @@ private:
         if (info->q_iterator_) {
             if (info->s_iterator_) {
                 list_s_.splice(list_s_.begin(), list_s_, *info->s_iterator_);
+                list_q_.erase(*info->q_iterator_);
                 info->q_iterator_.reset();
 
                 last_lir_to_hir();
                 prune_stack();
-            } else {
-                list_s_.push_front(url);
-                info->s_iterator_ = list_s_.begin();
-                list_q_.splice(list_q_.begin(), list_q_, *info->q_iterator_);
+                return Status::success;
             }
+
+            list_s_.push_front(url);
+            info->s_iterator_ = list_s_.begin();
+            list_q_.splice(list_q_.begin(), list_q_, *info->q_iterator_);
         }  
 
         return Status::success;

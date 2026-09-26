@@ -56,7 +56,6 @@ private:
     using PageIterator = PageList::iterator;
 
     const std::size_t never = std::numeric_limits<std::size_t>::max();
-    std::size_t request_pos_ = 0;
 
     PageList pages_;
     std::unordered_map<std::string, PageIterator> cache_;
@@ -72,7 +71,6 @@ private:
         const auto found = request_positions_.find(url);
         auto& positions = found->second;
         positions.pop();
-        ++request_pos_;
 
         return positions.empty() ? never : positions.front();
     }

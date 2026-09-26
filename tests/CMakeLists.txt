@@ -11,7 +11,7 @@ FetchContent_MakeAvailable(googletest)
 
 include(GoogleTest)
 
-foreach(cache IN ITEMS ARC LFU 2Q)
+foreach(cache IN ITEMS ARC LFU 2Q belady)
     set(${cache}_INCLUDE_DIR "${PROJECT_SOURCE_DIR}/headers" CACHE PATH
         "Directory containing ${cache}_cache.hpp")
 

@@ -182,6 +182,22 @@ ctest --test-dir build --output-on-failure
 (cd build && ctest --output-on-failure)
 ```
 
+### Запуск тестов конкретного кэша
+
+`<target>` - выбранный кэш (`ARC` / `LFU` / `2Q` / `LIRS` / `belady`)
+
+Для CMake/CTest **3.20 и новее**:
+
+```bash
+ctest --test-dir build -L <target> --output-on-failure
+```
+
+Для CMake/CTest **3.16-3.19**:
+
+```bash
+(cd build && ctest -L <target> --output-on-failure)
+```
+
 ## Структура проекта
 
 ```text

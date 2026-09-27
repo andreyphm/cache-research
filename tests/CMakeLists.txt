@@ -11,7 +11,7 @@ FetchContent_MakeAvailable(googletest)
 
 include(GoogleTest)
 
-foreach(cache IN ITEMS ARC LFU 2Q belady)
+foreach(cache IN ITEMS ARC LFU 2Q LIRS belady)
     add_executable(${cache}_tests ${cache}_tests.cpp)
     set_target_properties(${cache}_tests PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}")

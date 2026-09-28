@@ -1,7 +1,7 @@
 #pragma once
 
 #include <cstddef>
-#include <functional>
+#include <iostream>
 #include <iterator>
 #include <list>
 #include <memory>
@@ -18,38 +18,59 @@ enum class Status {
     found_in_ghost
 };
 
-template <typename Data> class Cache {
+template <typename Data, typename Lower> class Cache {
 public:
     static constexpr std::size_t capacity = 4;
 
-    Cache() = default;
-    Cache(const Cache&) = delete;
-    Cache& operator=(const Cache&) = delete;
+    using Entry = std::pair<std::string, Data>;
 
-    [[nodiscard]] Data fetch(const std::string& url, const std::function<Data(const std::string&)>& slow_get_page) {
+    Cache(Lower& lower_cache) : lower_cache_(lower_cache) {}
+
+    Data fetch(const std::string& url) {
         PageLocation* location = nullptr;
-        switch (find(url, location)) {
-            case Status::success:
-                return *location->iterator_->data_;
-
-            case Status::found_in_ghost: {
-                Data loaded = slow_get_page(url);
-                location->iterator_->data_ = loaded;
-                restore_from_ghost(*location);
-                return loaded;
-            }
-
-            case Status::not_found:
-                break;
+        if (find(url, location) == Status::success) {
+            return *location->iterator_->data_;
         }
 
-        Data loaded = slow_get_page(url);
-        insert(url, loaded);
+        Data loaded = lower_cache_.fetch(url);
+        auto entry = insert(url, loaded);
+        lower_cache_.remove(url);
+        if (entry) {
+            lower_cache_.insert(entry->first, entry->second);
+        }
 
         return loaded;
     }
 
-    [[nodiscard]] std::size_t get_size_parameter() const {
+    std::optional<Entry> insert(const std::string& url, Data data) {
+        const auto found = map_.find(url);
+        if (found != map_.end()) {
+            auto& location = found->second;
+            location.iterator_->data_ = data;
+            if (is_ghost(*location.list_)) {
+                return restore_from_ghost(location);
+            }
+            move_to_t2(location);
+            return std::nullopt;
+        }
+
+        auto entry = make_space_for_insert();
+        const auto added = list_t1_.emplace(list_t1_.begin(), url, data);
+        map_.emplace(added->url_, PageLocation{&list_t1_, added});
+        return entry;
+    }
+
+    void remove(const std::string& url) {
+        const auto found = map_.find(url);
+        if (found == map_.end()) {
+            std::cout << url << " not found\n";
+            return;
+        }
+        const auto location = found->second;
+        evict(*location.list_, location.iterator_);
+    }
+
+    std::size_t get_size_parameter() const {
         return target_t1_size_;
     }
 
@@ -76,15 +97,9 @@ private:
     PageList list_b1_;
     PageList list_b2_;
     std::unordered_map<std::string, PageLocation> map_;
+    Lower& lower_cache_;
 
-    void insert(const std::string& url, Data data) {
-        make_space_for_insert();
-
-        const auto added = list_t1_.emplace(list_t1_.begin(), url, data);
-        map_.emplace(added->url_, PageLocation{&list_t1_, added});
-    }
-
-    [[nodiscard]] Status find(const std::string& url, PageLocation*& location) {
+    Status find(const std::string& url, PageLocation*& location) {
         location = nullptr;
         const auto found = map_.find(url);
         if (found == map_.end()) {
@@ -110,7 +125,7 @@ private:
         location.list_ = &list_t2_;
     }
 
-    void restore_from_ghost(PageLocation& location) {
+    std::optional<Entry> restore_from_ghost(PageLocation& location) {
         bool is_b2_hit = location.list_ == &list_b2_;
         if (is_b2_hit) {
             if (target_t1_size_ > 0) {
@@ -120,63 +135,71 @@ private:
             ++target_t1_size_;
         }
 
-        replace(*location.list_);
+        auto entry = replace(*location.list_);
         move_to_t2(location);
+        return entry;
     }
 
-    void make_space_for_insert() {
+    std::optional<Entry> make_space_for_insert() {
         if (list_t1_.size() + list_b1_.size() == capacity) {
             if (list_t1_.size() == capacity) {
-                evict_oldest(list_t1_);
-                return;
+                return evict_oldest(list_t1_);
             }
 
             evict_oldest(list_b1_);
-            replace(list_b1_);
-            return;
+            return replace(list_b1_);
         }
 
         const auto total_size = map_.size();
         if (total_size < capacity) {
-            return;
+            return std::nullopt;
         }
 
         if (total_size == 2 * capacity) {
             evict_oldest(list_b2_);
         }
 
-        replace(list_b1_);
+        return replace(list_b1_);
     }
 
-    void replace(const PageList& origin) {
+    std::optional<Entry> replace(const PageList& origin) {
+        if (list_t1_.size() + list_t2_.size() < capacity) {
+            return std::nullopt;
+        }
         if (list_t1_.empty()) {
-            evict_to_ghost(list_t2_, list_b2_);
-            return;
+            return evict_to_ghost(list_t2_, list_b2_);
         }
 
         const auto size = list_t1_.size();
-        if (size > target_t1_size_ || (&origin == &list_b2_ && size == target_t1_size_)) {
-            evict_to_ghost(list_t1_, list_b1_);
+        if (list_t2_.empty() || size > target_t1_size_ || (&origin == &list_b2_ && size == target_t1_size_)) {
+            return evict_to_ghost(list_t1_, list_b1_);
         } else {
-            evict_to_ghost(list_t2_, list_b2_);
+            return evict_to_ghost(list_t2_, list_b2_);
         }
     }
 
-    void evict_to_ghost(PageList& source, PageList& ghost) {
+    Entry evict_to_ghost(PageList& source, PageList& ghost) {
         const auto page = std::prev(source.end());
+        Entry entry{page->url_, *page->data_};
 
         page->data_.reset();
         ghost.splice(ghost.begin(), source, page);
         map_.at(page->url_).list_ = &ghost;
+        return entry;
     }
 
-    void evict(PageList& list, PageIterator page) {
+    std::optional<Entry> evict(PageList& list, PageIterator page) {
+        std::optional<Entry> entry;
+        if (page->data_) {
+            entry.emplace(page->url_, *page->data_);
+        }
         map_.erase(page->url_);
         list.erase(page);
+        return entry;
     }
 
-    void evict_oldest(PageList& list) {
-        evict(list, std::prev(list.end()));
+    std::optional<Entry> evict_oldest(PageList& list) {
+        return evict(list, std::prev(list.end()));
     }
 };
 

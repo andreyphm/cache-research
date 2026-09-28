@@ -1,7 +1,7 @@
 #pragma once
 
 #include <cstddef>
-#include <functional>
+#include <iostream>
 #include <iterator>
 #include <list>
 #include <memory>
@@ -17,17 +17,17 @@ enum class Status {
     not_found
 };
 
-template <typename Data> class Cache {
+template <typename Data, typename Lower> class Cache {
 public:
     static constexpr std::size_t capacity = 8;
     static constexpr std::size_t hir_capacity = 1;
     static constexpr std::size_t lir_capacity = capacity - hir_capacity;
 
-    Cache() = default;
-    Cache(const Cache&) = delete;
-    Cache& operator=(const Cache&) = delete;
+    using Entry = std::pair<std::string, Data>;
 
-    [[nodiscard]] Data fetch(const std::string& url, const std::function<Data(const std::string&)>& slow_get_page) {
+    Cache(Lower& lower_cache) : lower_cache_(lower_cache) {}
+
+    Data fetch(const std::string& url) {
         PageInfo* info = nullptr;
         Status found = find(url, info);
 
@@ -35,10 +35,72 @@ public:
             return *info->data_;
         }
 
-        Data loaded = slow_get_page(url);
-        insert(url, loaded);
+        Data loaded = lower_cache_.fetch(url);
+        auto entry = insert(url, loaded);
+        lower_cache_.remove(url);
+        if (entry) {
+            lower_cache_.insert(entry->first, entry->second);
+        }
 
         return loaded;
+    }
+
+    std::optional<Entry> insert(const std::string& url, Data data) {
+        const auto found = map_.find(url);
+        if (found != map_.end()) {
+            auto& info = found->second;
+            if (info.data_) {
+                info.data_ = data;
+                PageInfo* location = nullptr;
+                find(url, location);
+                return std::nullopt;
+            }
+
+            info.data_ = data;
+            list_s_.splice(list_s_.begin(), list_s_, *info.s_iterator_);
+            std::optional<Entry> entry;
+            if (lir_count < lir_capacity) {
+                ++lir_count;
+            } else {
+                entry = last_lir_to_hir();
+            }
+            prune_stack();
+            return entry;
+        }
+
+        if (lir_count < lir_capacity) {
+            const auto added = list_s_.emplace(list_s_.begin(), url);
+            map_.emplace(added->url_, PageInfo{data, added});
+            ++lir_count;
+            return std::nullopt;
+        }
+
+        auto entry = make_space_in_queue();
+        const auto added_q = list_q_.emplace(list_q_.begin(), url);
+        const auto added_s = list_s_.emplace(list_s_.begin(), url);
+        map_.emplace(added_q->url_, PageInfo{data, added_s, added_q});
+        return entry;
+    }
+
+    void remove(const std::string& url) {
+        const auto found = map_.find(url);
+        if (found == map_.end()) {
+            std::cout << url << " not found\n";
+            return;
+        }
+
+        const auto& info = found->second;
+        if (info.data_ && !info.q_iterator_) {
+            --lir_count;
+        }
+        if (info.s_iterator_) {
+            list_s_.erase(*info.s_iterator_);
+        }
+        if (info.q_iterator_) {
+            list_q_.erase(*info.q_iterator_);
+        }
+        map_.erase(found);
+        prune_stack();
     }
 
 private:
@@ -62,32 +124,9 @@ private:
     PageList list_s_;
     PageList list_q_;
     std::unordered_map<std::string, PageInfo> map_;
+    Lower& lower_cache_;
 
-    void insert(const std::string& url, Data data) {
-        if (lir_count < lir_capacity) {
-            const auto added = list_s_.emplace(list_s_.begin(), url);
-            map_.emplace(added->url_, PageInfo{data, added});
-            lir_count++;
-            return;
-        }
-        const auto found = map_.find(url);
-        if (found != map_.end()) {
-            auto& info = found->second;
-            info.data_ = data;
-            list_s_.splice(list_s_.begin(), list_s_, *info.s_iterator_);
-
-            last_lir_to_hir();
-            prune_stack();
-            return;
-        }
-        make_space_in_queue();
-
-        const auto added_q = list_q_.emplace(list_q_.begin(), url);
-        const auto added_s = list_s_.emplace(list_s_.begin(), url);
-        map_.emplace(added_q->url_, PageInfo{data, added_s, added_q});
-    }
-
-    [[nodiscard]] Status find(const std::string& url, PageInfo*& info) {
+    Status find(const std::string& url, PageInfo*& info) {
         info = nullptr;
         const auto found = map_.find(url);
         if (found == map_.end() || !found->second.data_) {
@@ -106,7 +145,12 @@ private:
                 list_q_.erase(*info->q_iterator_);
                 info->q_iterator_.reset();
 
-                last_lir_to_hir();
+                if (lir_count < lir_capacity) {
+                    ++lir_count;
+                } else {
+                    last_lir_to_hir();
+                }
+
                 prune_stack();
                 return Status::success;
             }
@@ -119,10 +163,11 @@ private:
         return Status::success;
     }
 
-    void make_space_in_queue() {
+    std::optional<Entry> make_space_in_queue() {
         if (lir_count + list_q_.size() == capacity) {
-            evict_hir(std::prev(list_q_.end()));
+            return evict_hir(std::prev(list_q_.end()));
         }
+        return std::nullopt;
     }
 
     void prune_stack() {
@@ -143,19 +188,21 @@ private:
         }
     }
 
-    void last_lir_to_hir() {
+    std::optional<Entry> last_lir_to_hir() {
         auto& new_hir_info = map_.find(list_s_.back().url_)->second;
 
-        make_space_in_queue();
+        auto entry = make_space_in_queue();
         list_q_.splice(list_q_.begin(), list_s_, std::prev(list_s_.end()));
 
         new_hir_info.s_iterator_.reset();
         new_hir_info.q_iterator_ = list_q_.begin();
+        return entry;
     }
 
-    void evict_hir(PageIterator page) {
+    Entry evict_hir(PageIterator page) {
         auto found = map_.find(page->url_);
         auto& info = found->second;
+        Entry entry{page->url_, *info.data_};
 
         info.data_.reset();
         info.q_iterator_.reset();
@@ -165,6 +212,7 @@ private:
         }
 
         list_q_.erase(page);
+        return entry;
     }
 };
 

@@ -1,10 +1,11 @@
 #pragma once
 
 #include <cstddef>
-#include <functional>
+#include <iostream>
 #include <limits>
 #include <list>
 #include <memory>
+#include <optional>
 #include <queue>
 #include <stdexcept>
 #include <string>
@@ -19,27 +20,60 @@ enum class Status {
     not_found
 };
 
-template <typename Data> class Cache {
+template <typename Data, typename Lower> class Cache {
 public:
     static constexpr std::size_t capacity = 8;
 
-    Cache(const std::vector<std::string>& requests) {
+    using Entry = std::pair<std::string, Data>;
+
+    Cache(Lower& lower_cache, const std::vector<std::string>& requests)
+        : lower_cache_(lower_cache) {
         index_requests(requests);
     }
-    Cache(const Cache&) = delete;
-    Cache& operator=(const Cache&) = delete;
 
-    [[nodiscard]] Data fetch(const std::string& url, const std::function<Data(const std::string&)>& slow_get_page) {
+    Data fetch(const std::string& url) {
         const std::size_t next_use = process_request(url);
         const Data* data = nullptr;
         if (get(url, next_use, data) == Status::success) {
             return *data;
         }
 
-        Data loaded = slow_get_page(url);
-        insert(url, loaded, next_use);
+        Data loaded = lower_cache_.fetch(url);
+        auto entry = insert(url, loaded);
+        lower_cache_.remove(url);
+        if (entry) {
+            lower_cache_.insert(entry->first, entry->second);
+        }
 
         return loaded;
+    }
+
+    std::optional<Entry> insert(const std::string& url, Data data) {
+        const auto next_use = next_request(url);
+        const auto found = cache_.find(url);
+        if (found != cache_.end()) {
+            found->second->data_ = data;
+            found->second->next_use_ = next_use;
+            return std::nullopt;
+        }
+
+        std::optional<Entry> entry;
+        if (pages_.size() >= capacity) {
+            entry = evict();
+        }
+
+        const auto added = pages_.emplace(pages_.end(), url, data, next_use);
+        cache_.emplace(added->url_, added);
+        return entry;
+    }
+
+    void remove(const std::string& url) {
+        const auto found = cache_.find(url);
+        if (found == cache_.end()) {
+            std::cout << url << " not found\n";
+            return;
+        }
+        evict(found->second);
     }
 
 private:
@@ -60,6 +94,7 @@ private:
     PageList pages_;
     std::unordered_map<std::string, PageIterator> cache_;
     std::unordered_map<std::string, std::queue<std::size_t>> request_positions_;
+    Lower& lower_cache_;
 
     void index_requests(const std::vector<std::string>& requests) {
         for (std::size_t pos = 0; pos < requests.size(); pos++) {
@@ -75,18 +110,12 @@ private:
         return positions.empty() ? never : positions.front();
     }
 
-    PageIterator insert(const std::string& url, Data data, std::size_t next_use) {
-        if (pages_.size() >= capacity) {
-            evict();
-        }
-
-        const auto added = pages_.emplace(pages_.end(), url, data, next_use);
-        cache_.emplace(added->url_, added);
-
-        return added;
+    std::size_t next_request(const std::string& url) const {
+        const auto found = request_positions_.find(url);
+        return (found == request_positions_.end() || found->second.empty()) ? never : found->second.front();
     }
 
-    [[nodiscard]] Status get(const std::string& url, std::size_t next_use, const Data*& data) {
+    Status get(const std::string& url, std::size_t next_use, const Data*& data) {
         data = nullptr;
         const auto found = cache_.find(url);
         if (found == cache_.end()) {
@@ -100,7 +129,7 @@ private:
         return Status::success;
     }
 
-    void evict() {
+    Entry evict() {
         auto victim = pages_.begin();
         for (auto page = pages_.begin(); page != pages_.end(); page++) {
             if (page->next_use_ > victim->next_use_) {
@@ -108,9 +137,15 @@ private:
             }
         }
 
-        cache_.erase(victim->url_);
-        pages_.erase(victim);
+        return evict(victim);
+    }
+
+    Entry evict(PageIterator page) {
+        Entry entry{page->url_, page->data_};
+        cache_.erase(page->url_);
+        pages_.erase(page);
+        return entry;
     }
 };
 
-}
+} // namespace Belady

@@ -3,6 +3,8 @@
 
 #include <gtest/gtest.h>
 
+#include <cstddef>
+
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -12,6 +14,8 @@
 
 namespace Tests {
 namespace {
+
+constexpr std::size_t test_capacity = 4;
 
 using StringCache = LFU::Cache<std::string, SlowGetPage<std::string>>;
 
@@ -69,7 +73,7 @@ void fill(StringCache& cache, SlowGetPage<std::string>& lower) {
 
 TEST(LFU, miss_loads_and_caches_value) {
     SlowGetPage<std::string> lower;
-    StringCache cache{lower};
+    StringCache cache{lower, test_capacity};
 
     expect_load(cache, lower, "page key", "page data");
     expect_hit(cache, lower, "page key", "page data");
@@ -77,7 +81,7 @@ TEST(LFU, miss_loads_and_caches_value) {
 
 TEST(LFU, hit_does_not_replace_value) {
     SlowGetPage<std::string> lower;
-    StringCache cache{lower};
+    StringCache cache{lower, test_capacity};
 
     expect_load(cache, lower, "A", "original");
     loader_calls = 0;
@@ -88,7 +92,7 @@ TEST(LFU, hit_does_not_replace_value) {
 
 TEST(LFU, repeated_hit) {
     SlowGetPage<std::string> lower;
-    StringCache cache{lower};
+    StringCache cache{lower, test_capacity};
 
     expect_load(cache, lower, "A", "value-A");
     for (int access = 0; access < 100; ++access) {
@@ -98,7 +102,7 @@ TEST(LFU, repeated_hit) {
 
 TEST(LFU, hit_at_capacity_does_not_evict) {
     SlowGetPage<std::string> lower;
-    StringCache cache{lower};
+    StringCache cache{lower, test_capacity};
     fill(cache, lower);
 
     expect_hit(cache, lower, "B", "value-B");
@@ -109,7 +113,7 @@ TEST(LFU, hit_at_capacity_does_not_evict) {
 
 TEST(LFU, empty_key_and_value) {
     SlowGetPage<std::string> lower;
-    StringCache cache{lower};
+    StringCache cache{lower, test_capacity};
 
     expect_load(cache, lower, "", "");
     expect_hit(cache, lower, "", "");
@@ -117,7 +121,7 @@ TEST(LFU, empty_key_and_value) {
 
 TEST(LFU, embedded_null_key) {
     SlowGetPage<std::string> lower;
-    StringCache cache{lower};
+    StringCache cache{lower, test_capacity};
     const std::string key("a\0b", 3);
     const std::string value("x\0y", 3);
 
@@ -129,7 +133,7 @@ TEST(LFU, embedded_null_key) {
 
 TEST(LFU, integer_data) {
     SlowGetPage<int> lower;
-    LFU::Cache<int, SlowGetPage<int>> cache{lower};
+    LFU::Cache<int, SlowGetPage<int>> cache{lower, test_capacity};
 
     loader_calls = 0;
     for (int access = 0; access < 3; ++access) {
@@ -151,7 +155,7 @@ Payload load_payload(const std::string&) {
 
 TEST(LFU, non_default_data) {
     SlowGetPage<Payload> lower;
-    LFU::Cache<Payload, SlowGetPage<Payload>> cache{lower};
+    LFU::Cache<Payload, SlowGetPage<Payload>> cache{lower, test_capacity};
 
     loader_calls = 0;
     EXPECT_EQ(fetch_with_loader(cache, lower, "A", load_payload).value_, 42);
@@ -161,7 +165,7 @@ TEST(LFU, non_default_data) {
 
 TEST(LFU, returned_value_is_a_copy) {
     SlowGetPage<std::string> lower;
-    StringCache cache{lower};
+    StringCache cache{lower, test_capacity};
 
     auto value = fetch_with_loader(cache, lower, "A", original_load);
     value = "modified";
@@ -170,9 +174,9 @@ TEST(LFU, returned_value_is_a_copy) {
 
 TEST(LFU, independent_caches) {
     SlowGetPage<std::string> lower_first;
-    StringCache first{lower_first};
+    StringCache first{lower_first, test_capacity};
     SlowGetPage<std::string> lower_second;
-    StringCache second{lower_second};
+    StringCache second{lower_second, test_capacity};
 
     expect_load(first, lower_first, "A", "first");
     expect_load(second, lower_second, "A", "second");
@@ -182,7 +186,7 @@ TEST(LFU, independent_caches) {
 
 TEST(LFU, sequential_eviction) {
     SlowGetPage<std::string> lower;
-    StringCache cache{lower};
+    StringCache cache{lower, test_capacity};
 
     for (int key = 0; key < 40; ++key) {
         expect_load(cache, lower, std::to_string(key), "value-" + std::to_string(key));
@@ -197,7 +201,7 @@ TEST(LFU, sequential_eviction) {
 
 TEST(LFU, promotion_protects_page) {
     SlowGetPage<std::string> lower;
-    StringCache cache{lower};
+    StringCache cache{lower, test_capacity};
     fill(cache, lower);
 
     expect_hit(cache, lower, "A", "value-A");
@@ -210,7 +214,7 @@ TEST(LFU, promotion_protects_page) {
 
 TEST(LFU, frequency_beats_recency) {
     SlowGetPage<std::string> lower;
-    StringCache cache{lower};
+    StringCache cache{lower, test_capacity};
     fill(cache, lower);
 
     expect_hit(cache, lower, "A", "value-A");
@@ -227,7 +231,7 @@ TEST(LFU, frequency_beats_recency) {
 
 TEST(LFU, equal_frequency_evicts_oldest_page) {
     SlowGetPage<std::string> lower;
-    StringCache cache{lower};
+    StringCache cache{lower, test_capacity};
     fill(cache, lower);
 
     expect_hit(cache, lower, "A", "value-A");
@@ -243,7 +247,7 @@ TEST(LFU, equal_frequency_evicts_oldest_page) {
 
 TEST(LFU, all_pages_frequent_admit_new_page) {
     SlowGetPage<std::string> lower;
-    StringCache cache{lower};
+    StringCache cache{lower, test_capacity};
     fill(cache, lower);
 
     for (const auto* key : {"A", "B", "C", "D"}) {
@@ -258,7 +262,7 @@ TEST(LFU, all_pages_frequent_admit_new_page) {
 
 TEST(LFU, reload_uses_fresh_data_and_resets_frequency) {
     SlowGetPage<std::string> lower;
-    StringCache cache{lower};
+    StringCache cache{lower, test_capacity};
     fill(cache, lower);
 
     expect_load(cache, lower, "E", "value-E");
@@ -272,7 +276,7 @@ TEST(LFU, reload_uses_fresh_data_and_resets_frequency) {
 
 TEST(LFU, loader_exception_does_not_change_cache) {
     SlowGetPage<std::string> lower;
-    StringCache cache{lower};
+    StringCache cache{lower, test_capacity};
     fill(cache, lower);
 
     loader_calls = 0;
@@ -288,7 +292,7 @@ TEST(LFU, loader_exception_does_not_change_cache) {
 
 TEST(LFU, empty_loader_is_only_needed_on_miss) {
     SlowGetPage<std::string> lower;
-    StringCache cache{lower};
+    StringCache cache{lower, test_capacity};
 
     expect_load(cache, lower, "A", "value-A");
     const std::function<std::string(const std::string&)> empty_loader;

@@ -3,7 +3,6 @@
 #include <cstddef>
 #include <functional>
 #include <iterator>
-#include <iostream>
 #include <list>
 #include <memory>
 #include <string>
@@ -28,7 +27,8 @@ public:
 
     using Entry = std::pair<std::string, Data>;
 
-    Cache(Lower& lower_cache) : lower_cache_(lower_cache) {};
+    Cache(Lower& lower_cache, std::size_t capacity)
+        : capacity_(capacity), kin_((capacity + 3) / 4), kout_((capacity + 1) / 2), lower_cache_(lower_cache) {}
 
     Data fetch(const std::string& url) {
         PageLocation* location = nullptr;
@@ -61,6 +61,18 @@ public:
     }
 
     std::optional<Entry> insert(const std::string& url, Data data) {
+        const auto found = map_.find(url);
+        if (found != map_.end()) {
+            auto& location = found->second;
+            location.iterator_->data_ = data;
+            if (location.list_ == &list_a1out_) {
+                return restore_from_ghost(location);
+            }
+            if (location.list_ == &list_am_) {
+                list_am_.splice(list_am_.begin(), list_am_, location.iterator_);
+            }
+            return std::nullopt;
+        }
         std::optional<Entry> entry = make_space_for_insert();
 
         const auto added = list_a1in_.emplace(list_a1in_.begin(), url, data);
@@ -77,7 +89,6 @@ public:
                 return;
 
             case Status::not_found:
-                std::cout << url << " not found\n";
                 return;
         }
     }
@@ -98,6 +109,9 @@ private:
         PageIterator iterator_;
     };
 
+    std::size_t capacity_;
+    std::size_t kin_;
+    std::size_t kout_;
     PageList list_a1in_;
     PageList list_a1out_;
     PageList list_am_;
@@ -124,15 +138,15 @@ private:
     }
 
     std::optional<Entry> make_space_for_insert() {
-        if (list_a1in_.size() + list_am_.size() < capacity) {
+        if (list_a1in_.size() + list_am_.size() < capacity_) {
             return std::nullopt;
         }
 
-        if (list_a1in_.size() <= kin) {
+        if (list_a1in_.size() <= kin_ && !list_am_.empty()) {
             return evict_last(list_am_);
         }
 
-        if (list_a1out_.size() == kout) {
+        if (list_a1out_.size() == kout_) {
             evict_last(list_a1out_);
         }
         return evict_to_ghost();
@@ -140,8 +154,8 @@ private:
 
     std::optional<Entry> restore_from_ghost(PageLocation& location) {
         std::optional<Entry> entry;
-        if (list_a1in_.size() + list_am_.size() == capacity) {
-            if (list_a1in_.size() > kin) {
+        if (list_a1in_.size() + list_am_.size() == capacity_) {
+            if (list_a1in_.size() > kin_ || list_am_.empty()) {
                 entry = evict_to_ghost();
             } else {
                 entry = evict_last(list_am_);

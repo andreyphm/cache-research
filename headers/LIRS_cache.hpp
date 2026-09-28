@@ -1,7 +1,6 @@
 #pragma once
 
 #include <cstddef>
-#include <iostream>
 #include <iterator>
 #include <list>
 #include <memory>
@@ -25,7 +24,9 @@ public:
 
     using Entry = std::pair<std::string, Data>;
 
-    Cache(Lower& lower_cache) : lower_cache_(lower_cache) {}
+    Cache(Lower& lower_cache, std::size_t capacity)
+        : capacity_(capacity), lir_capacity_(capacity - hir_capacity),
+          lower_cache_(lower_cache) {}
 
     Data fetch(const std::string& url) {
         PageInfo* info = nullptr;
@@ -59,7 +60,7 @@ public:
             info.data_ = data;
             list_s_.splice(list_s_.begin(), list_s_, *info.s_iterator_);
             std::optional<Entry> entry;
-            if (lir_count < lir_capacity) {
+            if (lir_count < lir_capacity_) {
                 ++lir_count;
             } else {
                 entry = last_lir_to_hir();
@@ -68,7 +69,7 @@ public:
             return entry;
         }
 
-        if (lir_count < lir_capacity) {
+        if (lir_count < lir_capacity_) {
             const auto added = list_s_.emplace(list_s_.begin(), url);
             map_.emplace(added->url_, PageInfo{data, added});
             ++lir_count;
@@ -79,13 +80,15 @@ public:
         const auto added_q = list_q_.emplace(list_q_.begin(), url);
         const auto added_s = list_s_.emplace(list_s_.begin(), url);
         map_.emplace(added_q->url_, PageInfo{data, added_s, added_q});
+        if (lir_capacity_ == 0) {
+            prune_stack();
+        }
         return entry;
     }
 
     void remove(const std::string& url) {
         const auto found = map_.find(url);
         if (found == map_.end()) {
-            std::cout << url << " not found\n";
             return;
         }
 
@@ -119,6 +122,8 @@ private:
         std::optional<PageIterator> q_iterator_ = std::nullopt;
     };
 
+    std::size_t capacity_;
+    std::size_t lir_capacity_;
     std::size_t lir_count = 0;
 
     PageList list_s_;
@@ -134,6 +139,9 @@ private:
         }
 
         info = std::addressof(found->second);
+        if (lir_capacity_ == 0) {
+            return Status::success;
+        }
         if (!info->q_iterator_ && info->data_) {
             list_s_.splice(list_s_.begin(), list_s_, *info->s_iterator_);
             prune_stack();
@@ -145,7 +153,7 @@ private:
                 list_q_.erase(*info->q_iterator_);
                 info->q_iterator_.reset();
 
-                if (lir_count < lir_capacity) {
+                if (lir_count < lir_capacity_) {
                     ++lir_count;
                 } else {
                     last_lir_to_hir();
@@ -164,7 +172,7 @@ private:
     }
 
     std::optional<Entry> make_space_in_queue() {
-        if (lir_count + list_q_.size() == capacity) {
+        if (lir_count + list_q_.size() == capacity_) {
             return evict_hir(std::prev(list_q_.end()));
         }
         return std::nullopt;

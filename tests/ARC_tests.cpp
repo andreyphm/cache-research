@@ -3,11 +3,15 @@
 
 #include <gtest/gtest.h>
 
+#include <cstddef>
+
 #include <functional>
 #include <string>
 
 namespace Tests {
 namespace {
+
+constexpr std::size_t test_capacity = 4;
 
 using StringCache = ARC::Cache<std::string, SlowGetPage<std::string>>;
 
@@ -84,7 +88,7 @@ void fill(StringCache& cache, SlowGetPage<std::string>& lower) {
 
 TEST(ARC, miss_loads_and_caches_value) {
     SlowGetPage<std::string> lower;
-    StringCache cache{lower};
+    StringCache cache{lower, test_capacity};
 
     expect_load(cache, lower, "page key", "page data");
     expect_hit(cache, lower, "page key", "page data");
@@ -92,7 +96,7 @@ TEST(ARC, miss_loads_and_caches_value) {
 
 TEST(ARC, hit_does_not_replace_value) {
     SlowGetPage<std::string> lower;
-    StringCache cache{lower};
+    StringCache cache{lower, test_capacity};
 
     expect_load(cache, lower, "A", "original");
     loader_calls = 0;
@@ -103,7 +107,7 @@ TEST(ARC, hit_does_not_replace_value) {
 
 TEST(ARC, repeated_hit) {
     SlowGetPage<std::string> lower;
-    StringCache cache{lower};
+    StringCache cache{lower, test_capacity};
 
     expect_load(cache, lower, "A", "value-A");
     for (int access = 0; access < 100; ++access) {
@@ -113,7 +117,7 @@ TEST(ARC, repeated_hit) {
 
 TEST(ARC, empty_key_and_value) {
     SlowGetPage<std::string> lower;
-    StringCache cache{lower};
+    StringCache cache{lower, test_capacity};
 
     expect_load(cache, lower, "", "");
     expect_hit(cache, lower, "", "");
@@ -121,7 +125,7 @@ TEST(ARC, empty_key_and_value) {
 
 TEST(ARC, embedded_null_key) {
     SlowGetPage<std::string> lower;
-    StringCache cache{lower};
+    StringCache cache{lower, test_capacity};
     const std::string key("a\0b", 3);
     const std::string value("x\0y", 3);
 
@@ -133,7 +137,7 @@ TEST(ARC, embedded_null_key) {
 
 TEST(ARC, integer_data) {
     SlowGetPage<int> lower;
-    ARC::Cache<int, SlowGetPage<int>> cache{lower};
+    ARC::Cache<int, SlowGetPage<int>> cache{lower, test_capacity};
 
     loader_calls = 0;
     for (int access = 0; access < 3; ++access) {
@@ -145,7 +149,7 @@ TEST(ARC, integer_data) {
 
 TEST(ARC, non_default_data) {
     SlowGetPage<Payload> lower;
-    ARC::Cache<Payload, SlowGetPage<Payload>> cache{lower};
+    ARC::Cache<Payload, SlowGetPage<Payload>> cache{lower, test_capacity};
 
     loader_calls = 0;
     EXPECT_EQ(fetch_with_loader(cache, lower, "A", load_payload).value_, 42);
@@ -155,7 +159,7 @@ TEST(ARC, non_default_data) {
 
 TEST(ARC, returned_value_is_a_copy) {
     SlowGetPage<std::string> lower;
-    StringCache cache{lower};
+    StringCache cache{lower, test_capacity};
 
     auto value = fetch_with_loader(cache, lower, "A", original_load);
     value = "modified";
@@ -164,9 +168,9 @@ TEST(ARC, returned_value_is_a_copy) {
 
 TEST(ARC, independent_caches) {
     SlowGetPage<std::string> lower_first;
-    StringCache first{lower_first};
+    StringCache first{lower_first, test_capacity};
     SlowGetPage<std::string> lower_second;
-    StringCache second{lower_second};
+    StringCache second{lower_second, test_capacity};
 
     expect_load(first, lower_first, "A", "first");
     expect_load(second, lower_second, "A", "second");
@@ -176,7 +180,7 @@ TEST(ARC, independent_caches) {
 
 TEST(ARC, empty_loader_is_only_needed_on_miss) {
     SlowGetPage<std::string> lower;
-    StringCache cache{lower};
+    StringCache cache{lower, test_capacity};
 
     expect_load(cache, lower, "A", "value-A");
     const std::function<std::string(const std::string&)> empty_loader;
@@ -187,7 +191,7 @@ TEST(ARC, empty_loader_is_only_needed_on_miss) {
 
 TEST(ARC, fetch_at_capacity) {
     SlowGetPage<std::string> lower;
-    StringCache cache{lower};
+    StringCache cache{lower, test_capacity};
     fill(cache, lower);
 
     for (const auto* key : {"A", "B", "C", "D"}) {
@@ -197,7 +201,7 @@ TEST(ARC, fetch_at_capacity) {
 
 TEST(ARC, sequential_eviction) {
     SlowGetPage<std::string> lower;
-    StringCache cache{lower};
+    StringCache cache{lower, test_capacity};
 
     for (int key = 0; key < 40; ++key) {
         expect_load(cache, lower, std::to_string(key), "value-" + std::to_string(key));
@@ -212,7 +216,7 @@ TEST(ARC, sequential_eviction) {
 
 TEST(ARC, promotion_protects_page) {
     SlowGetPage<std::string> lower;
-    StringCache cache{lower};
+    StringCache cache{lower, test_capacity};
     fill(cache, lower);
 
     expect_hit(cache, lower, "A", "value-A");
@@ -224,7 +228,7 @@ TEST(ARC, promotion_protects_page) {
 
 TEST(ARC, all_pages_frequent) {
     SlowGetPage<std::string> lower;
-    StringCache cache{lower};
+    StringCache cache{lower, test_capacity};
     fill(cache, lower);
 
     for (const auto* key : {"A", "B", "C", "D"}) {
@@ -239,7 +243,7 @@ TEST(ARC, all_pages_frequent) {
 
 TEST(ARC, ghost_lookup_is_miss) {
     SlowGetPage<std::string> lower;
-    StringCache cache{lower};
+    StringCache cache{lower, test_capacity};
     fill(cache, lower);
 
     expect_hit(cache, lower, "A", "value-A");
@@ -251,7 +255,7 @@ TEST(ARC, ghost_lookup_is_miss) {
 
 TEST(ARC, reload_b1) {
     SlowGetPage<std::string> lower;
-    StringCache cache{lower};
+    StringCache cache{lower, test_capacity};
     fill(cache, lower);
 
     expect_hit(cache, lower, "A", "value-A");
@@ -263,12 +267,12 @@ TEST(ARC, reload_b1) {
     EXPECT_EQ(cache.get_size_parameter(), initial_parameter + 1);
     expect_hit(cache, lower, "B", "reloaded-B");
     expect_miss(cache, lower, "A");
-    EXPECT_LE(cache.get_size_parameter(), StringCache::capacity);
+    EXPECT_LE(cache.get_size_parameter(), test_capacity);
 }
 
 TEST(ARC, reload_b2) {
     SlowGetPage<std::string> lower;
-    StringCache cache{lower};
+    StringCache cache{lower, test_capacity};
     fill(cache, lower);
 
     for (const auto* key : {"A", "B", "C", "D"}) {
@@ -282,12 +286,12 @@ TEST(ARC, reload_b2) {
     EXPECT_EQ(cache.get_size_parameter(), initial_parameter - 1);
     expect_hit(cache, lower, "A", "reloaded-A");
     expect_miss(cache, lower, "E");
-    EXPECT_LE(cache.get_size_parameter(), StringCache::capacity);
+    EXPECT_LE(cache.get_size_parameter(), test_capacity);
 }
 
 TEST(ARC, loader_exception_preserves_residents) {
     SlowGetPage<std::string> lower;
-    StringCache cache{lower};
+    StringCache cache{lower, test_capacity};
     fill(cache, lower);
 
     expect_miss(cache, lower, "failed-load");
@@ -301,7 +305,7 @@ TEST(ARC, loader_exception_preserves_residents) {
 
 TEST(ARC, t2_hit_refreshes_recency) {
     SlowGetPage<std::string> lower;
-    StringCache cache{lower};
+    StringCache cache{lower, test_capacity};
     fill(cache, lower);
 
     for (const auto* key : {"A", "B", "C", "D", "A"}) {

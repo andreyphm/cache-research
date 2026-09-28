@@ -12,6 +12,8 @@
 namespace Tests {
 namespace {
 
+constexpr std::size_t test_capacity = 8;
+
 using StringCache = Belady::Cache<std::string, SlowGetPage<std::string>>;
 
 int loader_calls = 0;
@@ -62,7 +64,7 @@ void expect_hit(StringCache& cache, SlowGetPage<std::string>& lower, const std::
 
 std::vector<std::string> resident_keys() {
     std::vector<std::string> keys;
-    for (std::size_t index = 0; index < StringCache::capacity; ++index) {
+    for (std::size_t index = 0; index < test_capacity; ++index) {
         keys.push_back(std::to_string(index));
     }
     return keys;
@@ -76,12 +78,36 @@ void fill(StringCache& cache, SlowGetPage<std::string>& lower) {
 
 TEST(Belady, empty_sequence) {
     SlowGetPage<std::string> lower;
-    StringCache cache(lower, {});
+    StringCache cache(lower, test_capacity, {});
+}
+
+TEST(Belady, uses_requested_capacity) {
+    for (std::size_t capacity : {1u, 2u, 3u, 11u}) {
+        SCOPED_TRACE(capacity);
+        std::vector<std::string> keys;
+        for (std::size_t i = 0; i < capacity; ++i) {
+            keys.push_back(std::to_string(i));
+        }
+        auto requests = keys;
+        requests.push_back("new");
+        requests.insert(requests.end(), keys.begin(), keys.end());
+
+        SlowGetPage<std::string> lower;
+        StringCache cache(lower, capacity, requests);
+        for (const auto& key : keys) {
+            expect_load(cache, lower, key, key);
+        }
+        expect_load(cache, lower, "new", "new");
+        for (std::size_t i = 0; i + 1 < keys.size(); ++i) {
+            expect_hit(cache, lower, keys[i], keys[i]);
+        }
+        expect_load(cache, lower, keys.back(), keys.back());
+    }
 }
 
 TEST(Belady, miss_loads_and_caches_value) {
     SlowGetPage<std::string> lower;
-    StringCache cache(lower, {"page key", "page key"});
+    StringCache cache(lower, test_capacity, {"page key", "page key"});
 
     expect_load(cache, lower, "page key", "page data");
     expect_hit(cache, lower, "page key", "page data");
@@ -89,7 +115,7 @@ TEST(Belady, miss_loads_and_caches_value) {
 
 TEST(Belady, hit_does_not_replace_value) {
     SlowGetPage<std::string> lower;
-    StringCache cache(lower, {"A", "A", "A"});
+    StringCache cache(lower, test_capacity, {"A", "A", "A"});
 
     expect_load(cache, lower, "A", "original");
     loader_calls = 0;
@@ -100,7 +126,7 @@ TEST(Belady, hit_does_not_replace_value) {
 
 TEST(Belady, repeated_hit) {
     SlowGetPage<std::string> lower;
-    StringCache cache(lower, std::vector<std::string>(101, "A"));
+    StringCache cache(lower, test_capacity, std::vector<std::string>(101, "A"));
 
     expect_load(cache, lower, "A", "value-A");
     for (int access = 0; access < 100; ++access) {
@@ -113,7 +139,7 @@ TEST(Belady, hit_at_capacity_does_not_evict) {
     auto requests = keys;
     requests.insert(requests.end(), keys.begin(), keys.end());
     SlowGetPage<std::string> lower;
-    StringCache cache(lower, requests);
+    StringCache cache(lower, test_capacity, requests);
     fill(cache, lower);
 
     for (const auto& key : keys) {
@@ -123,7 +149,7 @@ TEST(Belady, hit_at_capacity_does_not_evict) {
 
 TEST(Belady, empty_key_and_value) {
     SlowGetPage<std::string> lower;
-    StringCache cache(lower, {"", ""});
+    StringCache cache(lower, test_capacity, {"", ""});
 
     expect_load(cache, lower, "", "");
     expect_hit(cache, lower, "", "");
@@ -133,7 +159,7 @@ TEST(Belady, embedded_null_key) {
     const std::string key("a\0b", 3);
     const std::string value("x\0y", 3);
     SlowGetPage<std::string> lower;
-    StringCache cache(lower, {key, "a", key, "a"});
+    StringCache cache(lower, test_capacity, {key, "a", key, "a"});
 
     expect_load(cache, lower, key, value);
     expect_load(cache, lower, "a", "prefix");
@@ -143,7 +169,7 @@ TEST(Belady, embedded_null_key) {
 
 TEST(Belady, integer_data) {
     SlowGetPage<int> lower;
-    Belady::Cache<int, SlowGetPage<int>> cache(lower, {"zero", "negative", "zero", "negative"});
+    Belady::Cache<int, SlowGetPage<int>> cache(lower, test_capacity, {"zero", "negative", "zero", "negative"});
 
     loader_calls = 0;
     for (int access = 0; access < 2; ++access) {
@@ -165,7 +191,7 @@ Payload load_payload(const std::string&) {
 
 TEST(Belady, non_default_data) {
     SlowGetPage<Payload> lower;
-    Belady::Cache<Payload, SlowGetPage<Payload>> cache(lower, {"A", "A"});
+    Belady::Cache<Payload, SlowGetPage<Payload>> cache(lower, test_capacity, {"A", "A"});
 
     loader_calls = 0;
     EXPECT_EQ(fetch_with_loader(cache, lower, "A", load_payload).value_, 42);
@@ -175,7 +201,7 @@ TEST(Belady, non_default_data) {
 
 TEST(Belady, returned_value_is_a_copy) {
     SlowGetPage<std::string> lower;
-    StringCache cache(lower, {"A", "A"});
+    StringCache cache(lower, test_capacity, {"A", "A"});
 
     auto value = fetch_with_loader(cache, lower, "A", original_load);
     value = "modified";
@@ -184,9 +210,9 @@ TEST(Belady, returned_value_is_a_copy) {
 
 TEST(Belady, independent_caches) {
     SlowGetPage<std::string> lower_first;
-    StringCache first(lower_first, {"A", "A"});
+    StringCache first(lower_first, test_capacity, {"A", "A"});
     SlowGetPage<std::string> lower_second;
-    StringCache second(lower_second, {"A", "A"});
+    StringCache second(lower_second, test_capacity, {"A", "A"});
 
     expect_load(first, lower_first, "A", "first");
     expect_load(second, lower_second, "A", "second");
@@ -197,7 +223,7 @@ TEST(Belady, independent_caches) {
 TEST(Belady, request_sequence_is_not_borrowed) {
     std::vector<std::string> requests = {"A", "A"};
     SlowGetPage<std::string> lower;
-    StringCache cache(lower, requests);
+    StringCache cache(lower, test_capacity, requests);
 
     requests.assign(20, "B");
     expect_load(cache, lower, "A", "value-A");
@@ -217,7 +243,7 @@ TEST(Belady, evicts_farthest_next_use) {
         }
         requests.push_back(keys[victim]);
         SlowGetPage<std::string> lower;
-        StringCache cache(lower, requests);
+        StringCache cache(lower, test_capacity, requests);
         fill(cache, lower);
         expect_load(cache, lower, "new", "value-new");
         for (const auto& key : keys) {
@@ -238,7 +264,7 @@ TEST(Belady, hit_updates_next_use_before_eviction) {
     requests.push_back(keys.front());
     requests.push_back(keys.front());
     SlowGetPage<std::string> lower;
-    StringCache cache(lower, requests);
+    StringCache cache(lower, test_capacity, requests);
     fill(cache, lower);
 
     expect_hit(cache, lower, keys.front(), "value-" + keys.front());
@@ -257,7 +283,7 @@ TEST(Belady, never_used_again_is_evicted_first) {
     requests.push_back("new");
     requests.insert(requests.end(), keys.begin(), keys.end() - 1);
     SlowGetPage<std::string> lower;
-    StringCache cache(lower, requests);
+    StringCache cache(lower, test_capacity, requests);
     fill(cache, lower);
 
     expect_hit(cache, lower, keys.back(), "value-" + keys.back());
@@ -274,7 +300,7 @@ TEST(Belady, incoming_page_is_admitted_before_its_distant_reuse) {
     requests.insert(requests.end(), keys.begin(), keys.end());
     requests.push_back("new");
     SlowGetPage<std::string> lower;
-    StringCache cache(lower, requests);
+    StringCache cache(lower, test_capacity, requests);
     fill(cache, lower);
 
     expect_load(cache, lower, "new", "value-new");
@@ -291,7 +317,7 @@ TEST(Belady, sequential_eviction) {
         requests.push_back(std::to_string(key));
     }
     SlowGetPage<std::string> lower;
-    StringCache cache(lower, requests);
+    StringCache cache(lower, test_capacity, requests);
 
     for (const auto& key : requests) {
         expect_load(cache, lower, key, "value-" + key);
@@ -306,7 +332,7 @@ TEST(Belady, hot_pages_survive_cold_scan) {
         requests.push_back("cold-" + std::to_string(step));
     }
     SlowGetPage<std::string> lower;
-    StringCache cache(lower, requests);
+    StringCache cache(lower, test_capacity, requests);
 
     for (int step = 0; step < 200; ++step) {
         for (const auto* key : {"hot-A", "hot-B"}) {
@@ -328,7 +354,7 @@ TEST(Belady, loader_exception_preserves_resident_data) {
     requests.insert(requests.end(), keys.begin(), keys.end());
     requests.push_back("failed");
     SlowGetPage<std::string> lower;
-    StringCache cache(lower, requests);
+    StringCache cache(lower, test_capacity, requests);
     fill(cache, lower);
 
     loader_calls = 0;
@@ -343,7 +369,7 @@ TEST(Belady, loader_exception_preserves_resident_data) {
 
 TEST(Belady, empty_loader_is_only_needed_on_miss) {
     SlowGetPage<std::string> lower;
-    StringCache cache(lower, {"A", "A", "missing", "missing"});
+    StringCache cache(lower, test_capacity, {"A", "A", "missing", "missing"});
 
     expect_load(cache, lower, "A", "value-A");
     const std::function<std::string(const std::string&)> empty_loader;

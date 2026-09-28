@@ -1,7 +1,6 @@
 #pragma once
 
 #include <cstddef>
-#include <iostream>
 #include <iterator>
 #include <list>
 #include <memory>
@@ -20,11 +19,10 @@ enum class Status {
 
 template <typename Data, typename Lower> class Cache {
 public:
-    static constexpr std::size_t capacity = 4;
-
     using Entry = std::pair<std::string, Data>;
 
-    Cache(Lower& lower_cache) : lower_cache_(lower_cache) {}
+    Cache(Lower& lower_cache, std::size_t capacity)
+        : capacity_(capacity), lower_cache_(lower_cache) {}
 
     Data fetch(const std::string& url) {
         PageLocation* location = nullptr;
@@ -63,7 +61,6 @@ public:
     void remove(const std::string& url) {
         const auto found = map_.find(url);
         if (found == map_.end()) {
-            std::cout << url << " not found\n";
             return;
         }
         const auto location = found->second;
@@ -90,7 +87,8 @@ private:
         PageIterator iterator_;
     };
 
-    std::size_t target_t1_size_ = capacity / 2;
+    std::size_t capacity_;
+    std::size_t target_t1_size_ = capacity_ / 2;
 
     PageList list_t1_;
     PageList list_t2_;
@@ -131,7 +129,7 @@ private:
             if (target_t1_size_ > 0) {
                 --target_t1_size_;
             }
-        } else if (target_t1_size_ < capacity) {
+        } else if (target_t1_size_ < capacity_) {
             ++target_t1_size_;
         }
 
@@ -141,8 +139,8 @@ private:
     }
 
     std::optional<Entry> make_space_for_insert() {
-        if (list_t1_.size() + list_b1_.size() == capacity) {
-            if (list_t1_.size() == capacity) {
+        if (list_t1_.size() + list_b1_.size() == capacity_) {
+            if (list_t1_.size() == capacity_) {
                 return evict_oldest(list_t1_);
             }
 
@@ -151,11 +149,11 @@ private:
         }
 
         const auto total_size = map_.size();
-        if (total_size < capacity) {
+        if (total_size < capacity_) {
             return std::nullopt;
         }
 
-        if (total_size == 2 * capacity) {
+        if (total_size == 2 * capacity_) {
             evict_oldest(list_b2_);
         }
 
@@ -163,7 +161,7 @@ private:
     }
 
     std::optional<Entry> replace(const PageList& origin) {
-        if (list_t1_.size() + list_t2_.size() < capacity) {
+        if (list_t1_.size() + list_t2_.size() < capacity_) {
             return std::nullopt;
         }
         if (list_t1_.empty()) {

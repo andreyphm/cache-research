@@ -1,7 +1,6 @@
 #pragma once
 
 #include <cstddef>
-#include <iostream>
 #include <iterator>
 #include <list>
 #include <memory>
@@ -19,11 +18,10 @@ enum class Status {
 
 template <typename Data, typename Lower> class Cache {
 public:
-    static constexpr std::size_t capacity = 4;
+    Cache(Lower& lower_cache, std::size_t capacity)
+        : capacity_(capacity), lower_cache_(lower_cache) {}
 
     using Entry = std::pair<std::string, Data>;
-
-    Cache(Lower& lower_cache) : lower_cache_(lower_cache) {}
 
     Data fetch(const std::string& url) {
         const Data* data = nullptr;
@@ -50,7 +48,7 @@ public:
         }
 
         std::optional<Entry> entry;
-        if (pages_.size() >= capacity) {
+        if (pages_.size() >= capacity_) {
             entry = evict(std::prev(pages_.end()));
         }
 
@@ -63,7 +61,6 @@ public:
     void remove(const std::string& url) {
         const auto found = map_.find(url);
         if (found == map_.end()) {
-            std::cout << url << " not found\n";
             return;
         }
         evict(found->second);
@@ -82,6 +79,7 @@ private:
     using PageList = std::list<Page>;
     using PageIterator = PageList::iterator;
 
+    std::size_t capacity_;
     PageList pages_;
     std::unordered_map<std::string, PageIterator> map_;
     Lower& lower_cache_;

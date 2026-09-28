@@ -22,12 +22,10 @@ enum class Status {
 
 template <typename Data, typename Lower> class Cache {
 public:
-    static constexpr std::size_t capacity = 8;
-
     using Entry = std::pair<std::string, Data>;
 
-    Cache(Lower& lower_cache, const std::vector<std::string>& requests)
-        : lower_cache_(lower_cache) {
+    Cache(Lower& lower_cache, std::size_t capacity, const std::vector<std::string>& requests)
+        : capacity_(capacity), lower_cache_(lower_cache) {
         index_requests(requests);
     }
 
@@ -58,7 +56,7 @@ public:
         }
 
         std::optional<Entry> entry;
-        if (pages_.size() >= capacity) {
+        if (pages_.size() >= capacity_) {
             entry = evict();
         }
 
@@ -91,6 +89,7 @@ private:
 
     const std::size_t never = std::numeric_limits<std::size_t>::max();
 
+    std::size_t capacity_;
     PageList pages_;
     std::unordered_map<std::string, PageIterator> cache_;
     std::unordered_map<std::string, std::queue<std::size_t>> request_positions_;

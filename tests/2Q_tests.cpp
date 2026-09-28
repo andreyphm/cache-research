@@ -1,4 +1,5 @@
 #include "2Q_cache.hpp"
+#include "SlowGetPage.hpp"
 
 #include <gtest/gtest.h>
 
@@ -9,7 +10,7 @@
 namespace Tests {
 namespace {
 
-using StringCache = TWO_Q::Cache<std::string>;
+using StringCache = TWO_Q::Cache<std::string, SlowGetPage<std::string>>;
 
 int loader_calls = 0;
 std::string expected_key;
@@ -35,19 +36,19 @@ int load_integer(const std::string& key) {
     return key == "zero" ? 0 : -42;
 }
 
-void expect_load(StringCache& cache, const std::string& key,
+void expect_load(StringCache& cache, SlowGetPage<std::string>& lower, const std::string& key,
                  const std::string& value) {
     loader_calls = 0;
     expected_key = key;
     loaded_value = value;
-    EXPECT_EQ(cache.fetch(key, load_page), value);
+    EXPECT_EQ(fetch_with_loader(cache, lower, key, load_page), value);
     EXPECT_EQ(loader_calls, 1) << "expected load: " << key;
 }
 
-void expect_hit(StringCache& cache, const std::string& key,
+void expect_hit(StringCache& cache, SlowGetPage<std::string>& lower, const std::string& key,
                 const std::string& value) {
     loader_calls = 0;
-    EXPECT_EQ(cache.fetch(key, unexpected_load), value);
+    EXPECT_EQ(fetch_with_loader(cache, lower, key, unexpected_load), value);
     EXPECT_EQ(loader_calls, 0) << "expected hit: " << key;
 }
 
@@ -59,11 +60,88 @@ std::string stopped_load(const std::string& url) {
     throw LoadStopped{};
 }
 
-void expect_miss(StringCache& cache, const std::string& key) {
+void expect_miss(StringCache& cache, SlowGetPage<std::string>& lower, const std::string& key) {
     loader_calls = 0;
     expected_key = key;
-    EXPECT_THROW((void)cache.fetch(key, stopped_load), LoadStopped);
+    EXPECT_THROW(fetch_with_loader(cache, lower, key, stopped_load), LoadStopped);
     EXPECT_EQ(loader_calls, 1) << "expected miss: " << key;
+}
+
+void fill(StringCache& cache, SlowGetPage<std::string>& lower) {
+    for (std::size_t key = 0; key < StringCache::capacity; ++key) {
+        expect_load(cache, lower, std::to_string(key), "value-" + std::to_string(key));
+    }
+}
+
+void fill_frequent(StringCache& cache, SlowGetPage<std::string>& lower) {
+    fill(cache, lower);
+
+    expect_load(cache, lower, "cold", "cold");
+    for (std::size_t key = 0; key < StringCache::capacity - StringCache::kin; ++key) {
+        expect_miss(cache, lower, std::to_string(key));
+        expect_load(cache, lower, std::to_string(key), "value-" + std::to_string(key));
+    }
+}
+
+TEST(TwoQ, miss_loads_and_caches_value) {
+    SlowGetPage<std::string> lower;
+    StringCache cache{lower};
+
+    expect_load(cache, lower, "page key", "page data");
+    expect_hit(cache, lower, "page key", "page data");
+}
+
+TEST(TwoQ, hit_does_not_replace_value) {
+    SlowGetPage<std::string> lower;
+    StringCache cache{lower};
+
+    expect_load(cache, lower, "A", "original");
+    loader_calls = 0;
+    EXPECT_EQ(fetch_with_loader(cache, lower, "A", unexpected_load), "original");
+    EXPECT_EQ(loader_calls, 0) << "expected hit: A";
+    expect_hit(cache, lower, "A", "original");
+}
+
+TEST(TwoQ, repeated_hit) {
+    SlowGetPage<std::string> lower;
+    StringCache cache{lower};
+
+    expect_load(cache, lower, "A", "value-A");
+    for (int access = 0; access < 100; ++access) {
+        expect_hit(cache, lower, "A", "value-A");
+    }
+}
+
+TEST(TwoQ, empty_key_and_value) {
+    SlowGetPage<std::string> lower;
+    StringCache cache{lower};
+
+    expect_load(cache, lower, "", "");
+    expect_hit(cache, lower, "", "");
+}
+
+TEST(TwoQ, embedded_null_key) {
+    SlowGetPage<std::string> lower;
+    StringCache cache{lower};
+    const std::string key("a\0b", 3);
+    const std::string value("x\0y", 3);
+
+    expect_load(cache, lower, key, value);
+    expect_load(cache, lower, "a", "prefix");
+    expect_hit(cache, lower, key, value);
+    expect_hit(cache, lower, "a", "prefix");
+}
+
+TEST(TwoQ, integer_data) {
+    SlowGetPage<int> lower;
+    TWO_Q::Cache<int, SlowGetPage<int>> cache{lower};
+
+    loader_calls = 0;
+    for (int access = 0; access < 3; ++access) {
+        EXPECT_EQ(fetch_with_loader(cache, lower, "zero", load_integer), 0);
+        EXPECT_EQ(fetch_with_loader(cache, lower, "negative", load_integer), -42);
+    }
+    EXPECT_EQ(loader_calls, 2);
 }
 
 struct Payload {
@@ -76,308 +154,256 @@ Payload load_payload(const std::string&) {
     return Payload{42};
 }
 
-void fill(StringCache& cache) {
-    for (std::size_t key = 0; key < StringCache::capacity; ++key) {
-        expect_load(cache, std::to_string(key), "value-" + std::to_string(key));
-    }
-}
-
-void fill_frequent(StringCache& cache) {
-    fill(cache);
-
-    expect_load(cache, "cold", "cold");
-    for (std::size_t key = 0; key < StringCache::capacity - StringCache::kin; ++key) {
-        expect_miss(cache, std::to_string(key));
-        expect_load(cache, std::to_string(key), "value-" + std::to_string(key));
-    }
-}
-
-TEST(TwoQ, miss_loads_and_caches_value) {
-    StringCache cache;
-
-    expect_load(cache, "page key", "page data");
-    expect_hit(cache, "page key", "page data");
-}
-
-TEST(TwoQ, hit_does_not_replace_value) {
-    StringCache cache;
-
-    expect_load(cache, "A", "original");
-    loader_calls = 0;
-    EXPECT_EQ(cache.fetch("A", unexpected_load), "original");
-    EXPECT_EQ(loader_calls, 0) << "expected hit: A";
-    expect_hit(cache, "A", "original");
-}
-
-TEST(TwoQ, repeated_hit) {
-    StringCache cache;
-
-    expect_load(cache, "A", "value-A");
-    for (int access = 0; access < 100; ++access) {
-        expect_hit(cache, "A", "value-A");
-    }
-}
-
-TEST(TwoQ, empty_key_and_value) {
-    StringCache cache;
-
-    expect_load(cache, "", "");
-    expect_hit(cache, "", "");
-}
-
-TEST(TwoQ, embedded_null_key) {
-    StringCache cache;
-    const std::string key("a\0b", 3);
-    const std::string value("x\0y", 3);
-
-    expect_load(cache, key, value);
-    expect_load(cache, "a", "prefix");
-    expect_hit(cache, key, value);
-    expect_hit(cache, "a", "prefix");
-}
-
-TEST(TwoQ, integer_data) {
-    TWO_Q::Cache<int> cache;
-
-    loader_calls = 0;
-    for (int access = 0; access < 3; ++access) {
-        EXPECT_EQ(cache.fetch("zero", load_integer), 0);
-        EXPECT_EQ(cache.fetch("negative", load_integer), -42);
-    }
-    EXPECT_EQ(loader_calls, 2);
-}
-
 TEST(TwoQ, non_default_data) {
-    TWO_Q::Cache<Payload> cache;
+    SlowGetPage<Payload> lower;
+    TWO_Q::Cache<Payload, SlowGetPage<Payload>> cache{lower};
 
     loader_calls = 0;
-    EXPECT_EQ(cache.fetch("A", load_payload).value_, 42);
-    EXPECT_EQ(cache.fetch("A", load_payload).value_, 42);
+    EXPECT_EQ(fetch_with_loader(cache, lower, "A", load_payload).value_, 42);
+    EXPECT_EQ(fetch_with_loader(cache, lower, "A", load_payload).value_, 42);
     EXPECT_EQ(loader_calls, 1);
 }
 
 TEST(TwoQ, returned_value_is_a_copy) {
-    StringCache cache;
+    SlowGetPage<std::string> lower;
+    StringCache cache{lower};
 
-    auto value = cache.fetch("A", original_load);
+    auto value = fetch_with_loader(cache, lower, "A", original_load);
     value = "modified";
-    expect_hit(cache, "A", "original");
+    expect_hit(cache, lower, "A", "original");
 }
 
 TEST(TwoQ, independent_caches) {
-    StringCache first;
-    StringCache second;
+    SlowGetPage<std::string> lower_first;
+    StringCache first{lower_first};
+    SlowGetPage<std::string> lower_second;
+    StringCache second{lower_second};
 
-    expect_load(first, "A", "first");
-    expect_load(second, "A", "second");
-    expect_hit(first, "A", "first");
-    expect_hit(second, "A", "second");
+    expect_load(first, lower_first, "A", "first");
+    expect_load(second, lower_second, "A", "second");
+    expect_hit(first, lower_first, "A", "first");
+    expect_hit(second, lower_second, "A", "second");
 }
 
 TEST(TwoQ, empty_loader_is_only_needed_on_miss) {
-    StringCache cache;
+    SlowGetPage<std::string> lower;
+    StringCache cache{lower};
 
-    expect_load(cache, "A", "value-A");
+    expect_load(cache, lower, "A", "value-A");
     const std::function<std::string(const std::string&)> empty_loader;
-    EXPECT_EQ(cache.fetch("A", empty_loader), "value-A");
-    EXPECT_THROW((void)cache.fetch("missing", empty_loader), std::bad_function_call);
-    expect_load(cache, "missing", "loaded");
+    EXPECT_EQ(fetch_with_loader(cache, lower, "A", empty_loader), "value-A");
+    EXPECT_THROW(fetch_with_loader(cache, lower, "missing", empty_loader), std::bad_function_call);
+    expect_load(cache, lower, "missing", "loaded");
 }
 
 TEST(TwoQ, fetch_at_capacity) {
-    StringCache cache;
-    fill(cache);
+    SlowGetPage<std::string> lower;
+    StringCache cache{lower};
+    fill(cache, lower);
 
     for (std::size_t key = 0; key < StringCache::capacity; ++key) {
-        expect_hit(cache, std::to_string(key), "value-" + std::to_string(key));
+        expect_hit(cache, lower, std::to_string(key), "value-" + std::to_string(key));
     }
 }
 
 TEST(TwoQ, sequential_eviction) {
-    StringCache cache;
+    SlowGetPage<std::string> lower;
+    StringCache cache{lower};
 
     for (int key = 0; key < 40; ++key) {
-        expect_load(cache, std::to_string(key), "value-" + std::to_string(key));
+        expect_load(cache, lower, std::to_string(key), "value-" + std::to_string(key));
     }
     for (std::size_t key = 0; key < 40 - StringCache::capacity; ++key) {
-        expect_miss(cache, std::to_string(key));
+        expect_miss(cache, lower, std::to_string(key));
     }
     for (std::size_t key = 40 - StringCache::capacity; key < 40; ++key) {
-        expect_hit(cache, std::to_string(key), "value-" + std::to_string(key));
+        expect_hit(cache, lower, std::to_string(key), "value-" + std::to_string(key));
     }
 }
 
 TEST(TwoQ, a1in_hit_preserves_fifo) {
-    StringCache cache;
-    fill(cache);
+    SlowGetPage<std::string> lower;
+    StringCache cache{lower};
+    fill(cache, lower);
 
     for (int access = 0; access < 10; ++access) {
-        expect_hit(cache, "0", "value-0");
+        expect_hit(cache, lower, "0", "value-0");
     }
-    expect_load(cache, "new", "new");
-    expect_miss(cache, "0");
-    expect_hit(cache, "1", "value-1");
+    expect_load(cache, lower, "new", "new");
+    expect_miss(cache, lower, "0");
+    expect_hit(cache, lower, "1", "value-1");
 }
 
 TEST(TwoQ, ghost_lookup_is_miss) {
-    StringCache cache;
-    fill(cache);
+    SlowGetPage<std::string> lower;
+    StringCache cache{lower};
+    fill(cache, lower);
 
-    expect_load(cache, "new", "new");
+    expect_load(cache, lower, "new", "new");
     for (int access = 0; access < 10; ++access) {
-        expect_miss(cache, "0");
+        expect_miss(cache, lower, "0");
     }
 }
 
 TEST(TwoQ, ghost_reload_promotes_page) {
-    StringCache cache;
-    fill(cache);
+    SlowGetPage<std::string> lower;
+    StringCache cache{lower};
+    fill(cache, lower);
 
-    expect_load(cache, "new", "new");
-    expect_miss(cache, "0");
-    expect_load(cache, "0", "reloaded");
-    expect_hit(cache, "0", "reloaded");
-    expect_miss(cache, "1");
+    expect_load(cache, lower, "new", "new");
+    expect_miss(cache, lower, "0");
+    expect_load(cache, lower, "0", "reloaded");
+    expect_hit(cache, lower, "0", "reloaded");
+    expect_miss(cache, lower, "1");
     for (int key = 0; key < 40; ++key) {
-        expect_load(cache, "scan-" + std::to_string(key), "scan");
+        expect_load(cache, lower, "scan-" + std::to_string(key), "scan");
     }
-    expect_hit(cache, "0", "reloaded");
+    expect_hit(cache, lower, "0", "reloaded");
 }
 
 TEST(TwoQ, forgotten_ghost_returns_to_a1in) {
-    StringCache cache;
-    fill(cache);
+    SlowGetPage<std::string> lower;
+    StringCache cache{lower};
+    fill(cache, lower);
 
     for (std::size_t key = 0; key <= StringCache::kout; ++key) {
-        expect_load(cache, "scan-" + std::to_string(key), "scan");
+        expect_load(cache, lower, "scan-" + std::to_string(key), "scan");
     }
-    expect_load(cache, "0", "reloaded");
-    expect_hit(cache, "0", "reloaded");
+    expect_load(cache, lower, "0", "reloaded");
+    expect_hit(cache, lower, "0", "reloaded");
     for (std::size_t key = 0; key < StringCache::capacity; ++key) {
-        expect_load(cache, "next-" + std::to_string(key), "next");
+        expect_load(cache, lower, "next-" + std::to_string(key), "next");
     }
-    expect_miss(cache, "0");
+    expect_miss(cache, lower, "0");
 }
 
 TEST(TwoQ, ghost_hit_preserves_fifo) {
-    StringCache cache;
-    fill(cache);
+    SlowGetPage<std::string> lower;
+    StringCache cache{lower};
+    fill(cache, lower);
 
-    expect_load(cache, "first", "first");
+    expect_load(cache, lower, "first", "first");
     for (std::size_t key = 0; key < StringCache::kout; ++key) {
-        expect_miss(cache, "0");
-        expect_load(cache, "scan-" + std::to_string(key), "scan");
+        expect_miss(cache, lower, "0");
+        expect_load(cache, lower, "scan-" + std::to_string(key), "scan");
     }
-    expect_load(cache, "0", "reloaded");
+    expect_load(cache, lower, "0", "reloaded");
     for (std::size_t key = 0; key < StringCache::capacity; ++key) {
-        expect_load(cache, "next-" + std::to_string(key), "next");
+        expect_load(cache, lower, "next-" + std::to_string(key), "next");
     }
-    expect_miss(cache, "0");
+    expect_miss(cache, lower, "0");
 }
 
 TEST(TwoQ, newest_ghost_survives_history_limit) {
-    StringCache cache;
-    fill(cache);
+    SlowGetPage<std::string> lower;
+    StringCache cache{lower};
+    fill(cache, lower);
 
     for (std::size_t key = 0; key <= StringCache::kout; ++key) {
-        expect_load(cache, "scan-" + std::to_string(key), "scan");
+        expect_load(cache, lower, "scan-" + std::to_string(key), "scan");
     }
     const auto key = std::to_string(StringCache::kout);
-    expect_miss(cache, key);
-    expect_load(cache, key, "reloaded");
+    expect_miss(cache, lower, key);
+    expect_load(cache, lower, key, "reloaded");
     for (std::size_t index = 0; index < StringCache::capacity; ++index) {
-        expect_load(cache, "next-" + std::to_string(index), "next");
+        expect_load(cache, lower, "next-" + std::to_string(index), "next");
     }
-    expect_hit(cache, key, "reloaded");
+    expect_hit(cache, lower, key, "reloaded");
 }
 
 TEST(TwoQ, ghost_reload_at_kin_evicts_am) {
-    StringCache cache;
+    SlowGetPage<std::string> lower;
+    StringCache cache{lower};
 
-    fill_frequent(cache);
-    expect_miss(cache, "6");
-    expect_load(cache, "6", "reloaded");
-    expect_miss(cache, "0");
-    expect_hit(cache, "6", "reloaded");
-    expect_hit(cache, "7", "value-7");
-    expect_hit(cache, "cold", "cold");
+    fill_frequent(cache, lower);
+    expect_miss(cache, lower, "6");
+    expect_load(cache, lower, "6", "reloaded");
+    expect_miss(cache, lower, "0");
+    expect_hit(cache, lower, "6", "reloaded");
+    expect_hit(cache, lower, "7", "value-7");
+    expect_hit(cache, lower, "cold", "cold");
 }
 
 TEST(TwoQ, oldest_ghost_reload_at_full_history_preserves_other_ghosts) {
-    StringCache cache;
-    fill(cache);
+    SlowGetPage<std::string> lower;
+    StringCache cache{lower};
+    fill(cache, lower);
 
     for (std::size_t key = 0; key < StringCache::kout; ++key) {
-        expect_load(cache, "scan-" + std::to_string(key), "scan");
+        expect_load(cache, lower, "scan-" + std::to_string(key), "scan");
     }
 
     for (std::size_t key = 0; key < StringCache::kout; ++key) {
-        expect_load(cache, std::to_string(key), "fresh-" + std::to_string(key));
+        expect_load(cache, lower, std::to_string(key), "fresh-" + std::to_string(key));
     }
     for (std::size_t key = 0; key < 2 * StringCache::capacity; ++key) {
-        expect_load(cache, "next-" + std::to_string(key), "next");
+        expect_load(cache, lower, "next-" + std::to_string(key), "next");
     }
     for (std::size_t key = 0; key < StringCache::kout; ++key) {
-        expect_hit(cache, std::to_string(key), "fresh-" + std::to_string(key));
+        expect_hit(cache, lower, std::to_string(key), "fresh-" + std::to_string(key));
     }
 }
 
 TEST(TwoQ, failed_ghost_reload_preserves_residents_and_promotion) {
-    StringCache cache;
+    SlowGetPage<std::string> lower;
+    StringCache cache{lower};
 
-    fill_frequent(cache);
-    expect_miss(cache, "6");
-    expect_miss(cache, "6");
+    fill_frequent(cache, lower);
+    expect_miss(cache, lower, "6");
+    expect_miss(cache, lower, "6");
     for (std::size_t key = 0; key < StringCache::capacity - StringCache::kin; ++key) {
-        expect_hit(cache, std::to_string(key), "value-" + std::to_string(key));
+        expect_hit(cache, lower, std::to_string(key), "value-" + std::to_string(key));
     }
-    expect_hit(cache, "7", "value-7");
-    expect_hit(cache, "cold", "cold");
+    expect_hit(cache, lower, "7", "value-7");
+    expect_hit(cache, lower, "cold", "cold");
 
-    expect_load(cache, "6", "recovered");
-    expect_miss(cache, "0");
+    expect_load(cache, lower, "6", "recovered");
+    expect_miss(cache, lower, "0");
     for (std::size_t key = 0; key < StringCache::capacity; ++key) {
-        expect_load(cache, "scan-" + std::to_string(key), "scan");
+        expect_load(cache, lower, "scan-" + std::to_string(key), "scan");
     }
-    expect_hit(cache, "6", "recovered");
+    expect_hit(cache, lower, "6", "recovered");
 }
 
 TEST(TwoQ, evicted_am_page_reloads_into_a1in) {
-    StringCache cache;
+    SlowGetPage<std::string> lower;
+    StringCache cache{lower};
 
-    fill_frequent(cache);
-    expect_load(cache, "6", "reloaded-6");
-    expect_load(cache, "0", "reloaded-0");
-    expect_hit(cache, "0", "reloaded-0");
+    fill_frequent(cache, lower);
+    expect_load(cache, lower, "6", "reloaded-6");
+    expect_load(cache, lower, "0", "reloaded-0");
+    expect_hit(cache, lower, "0", "reloaded-0");
 
     for (std::size_t key = 0; key < StringCache::capacity; ++key) {
-        expect_load(cache, "scan-" + std::to_string(key), "scan");
+        expect_load(cache, lower, "scan-" + std::to_string(key), "scan");
     }
-    expect_miss(cache, "0");
-    expect_hit(cache, "6", "reloaded-6");
+    expect_miss(cache, lower, "0");
+    expect_hit(cache, lower, "6", "reloaded-6");
 }
 
 TEST(TwoQ, loader_exception_preserves_residents) {
-    StringCache cache;
-    fill(cache);
+    SlowGetPage<std::string> lower;
+    StringCache cache{lower};
+    fill(cache, lower);
 
-    expect_miss(cache, "failed-load");
-    expect_miss(cache, "failed-load");
+    expect_miss(cache, lower, "failed-load");
+    expect_miss(cache, lower, "failed-load");
     for (std::size_t key = 0; key < StringCache::capacity; ++key) {
-        expect_hit(cache, std::to_string(key), "value-" + std::to_string(key));
+        expect_hit(cache, lower, std::to_string(key), "value-" + std::to_string(key));
     }
-    expect_load(cache, "failed-load", "recovered");
-    expect_hit(cache, "failed-load", "recovered");
+    expect_load(cache, lower, "failed-load", "recovered");
+    expect_hit(cache, lower, "failed-load", "recovered");
 }
 
 TEST(TwoQ, am_hit_refreshes_recency) {
-    StringCache cache;
+    SlowGetPage<std::string> lower;
+    StringCache cache{lower};
 
-    fill_frequent(cache);
-    expect_hit(cache, "0", "value-0");
-    expect_load(cache, "new", "new");
-    expect_miss(cache, "1");
-    expect_hit(cache, "0", "value-0");
+    fill_frequent(cache, lower);
+    expect_hit(cache, lower, "0", "value-0");
+    expect_load(cache, lower, "new", "new");
+    expect_miss(cache, lower, "1");
+    expect_hit(cache, lower, "0", "value-0");
 }
 
 }

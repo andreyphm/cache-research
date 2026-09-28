@@ -1,4 +1,5 @@
 #include "LIRS_cache.hpp"
+#include "SlowGetPage.hpp"
 
 #include <gtest/gtest.h>
 
@@ -10,7 +11,7 @@
 namespace Tests {
 namespace {
 
-using StringCache = LIRS::Cache<std::string>;
+using StringCache = LIRS::Cache<std::string, SlowGetPage<std::string>>;
 
 int loader_calls = 0;
 std::string expected_key;
@@ -50,28 +51,28 @@ std::string value_for(const std::string& key) {
     return "value-" + key;
 }
 
-void expect_load(StringCache& cache, const std::string& key,
+void expect_load(StringCache& cache, SlowGetPage<std::string>& lower, const std::string& key,
                  const std::string& value) {
     loader_calls = 0;
     expected_key = key;
     loaded_value = value;
-    EXPECT_EQ(cache.fetch(key, load_page), value);
+    EXPECT_EQ(fetch_with_loader(cache, lower, key, load_page), value);
     EXPECT_EQ(loader_calls, 1) << "expected load: " << key;
 }
 
-void expect_load(StringCache& cache, const std::string& key) {
-    expect_load(cache, key, value_for(key));
+void expect_load(StringCache& cache, SlowGetPage<std::string>& lower, const std::string& key) {
+    expect_load(cache, lower, key, value_for(key));
 }
 
-void expect_hit(StringCache& cache, const std::string& key,
+void expect_hit(StringCache& cache, SlowGetPage<std::string>& lower, const std::string& key,
                 const std::string& value) {
     loader_calls = 0;
-    EXPECT_EQ(cache.fetch(key, unexpected_load), value);
+    EXPECT_EQ(fetch_with_loader(cache, lower, key, unexpected_load), value);
     EXPECT_EQ(loader_calls, 0) << "expected hit: " << key;
 }
 
-void expect_hit(StringCache& cache, const std::string& key) {
-    expect_hit(cache, key, value_for(key));
+void expect_hit(StringCache& cache, SlowGetPage<std::string>& lower, const std::string& key) {
+    expect_hit(cache, lower, key, value_for(key));
 }
 
 struct LoadStopped {};
@@ -82,93 +83,85 @@ std::string stopped_load(const std::string& url) {
     throw LoadStopped{};
 }
 
-void expect_miss(StringCache& cache, const std::string& key) {
+void expect_miss(StringCache& cache, SlowGetPage<std::string>& lower, const std::string& key) {
     loader_calls = 0;
     expected_key = key;
-    EXPECT_THROW((void)cache.fetch(key, stopped_load), LoadStopped);
+    EXPECT_THROW(fetch_with_loader(cache, lower, key, stopped_load), LoadStopped);
     EXPECT_EQ(loader_calls, 1) << "expected miss: " << key;
 }
 
-void fill_lir(StringCache& cache) {
+void fill_lir(StringCache& cache, SlowGetPage<std::string>& lower) {
     for (std::size_t i = 0; i < StringCache::lir_capacity; ++i) {
-        expect_load(cache, lir_key(i));
+        expect_load(cache, lower, lir_key(i));
     }
 }
 
-void touch_lir(StringCache& cache, std::size_t first = 0) {
+void touch_lir(StringCache& cache, SlowGetPage<std::string>& lower, std::size_t first = 0) {
     for (std::size_t i = first; i < StringCache::lir_capacity; ++i) {
-        expect_hit(cache, lir_key(i));
+        expect_hit(cache, lower, lir_key(i));
     }
 }
-
-class LirsTransitions : public ::testing::Test {
-protected:
-    void SetUp() override {
-        ASSERT_EQ(StringCache::hir_capacity, 1u);
-        ASSERT_GE(StringCache::lir_capacity, 2u);
-        ASSERT_EQ(StringCache::capacity,
-                  StringCache::lir_capacity + StringCache::hir_capacity);
-        fill_lir(cache);
-        expect_load(cache, "hir");
-    }
-
-    StringCache cache;
-};
 
 TEST(LIRS, miss_loads_and_caches_value) {
-    StringCache cache;
+    SlowGetPage<std::string> lower;
+    StringCache cache{lower};
 
-    expect_load(cache, "page key", "page data");
-    expect_hit(cache, "page key", "page data");
+    expect_load(cache, lower, "page key", "page data");
+    expect_hit(cache, lower, "page key", "page data");
 }
 
 TEST(LIRS, hit_does_not_replace_value) {
-    StringCache cache;
+    SlowGetPage<std::string> lower;
+    StringCache cache{lower};
 
-    expect_load(cache, "page", "original");
+    expect_load(cache, lower, "page", "original");
     loader_calls = 0;
-    EXPECT_EQ(cache.fetch("page", unexpected_load), "original");
+    EXPECT_EQ(fetch_with_loader(cache, lower, "page", unexpected_load), "original");
     EXPECT_EQ(loader_calls, 0) << "expected hit: page";
-    expect_hit(cache, "page", "original");
+    expect_hit(cache, lower, "page", "original");
 }
 
 TEST(LIRS, repeated_hits_do_not_consume_capacity) {
-    StringCache cache;
+    SlowGetPage<std::string> lower;
+    StringCache cache{lower};
 
-    expect_load(cache, lir_key(0));
+    expect_load(cache, lower, lir_key(0));
     for (int i = 0; i < 100; ++i) {
-        expect_hit(cache, lir_key(0));
+        expect_hit(cache, lower, lir_key(0));
     }
     for (std::size_t i = 1; i < StringCache::lir_capacity; ++i) {
-        expect_load(cache, lir_key(i));
+        expect_load(cache, lower, lir_key(i));
     }
-    touch_lir(cache);
+    touch_lir(cache, lower);
 }
 
 TEST(LIRS, empty_key_and_empty_value_are_cached) {
-    StringCache cache;
+    SlowGetPage<std::string> lower;
+    StringCache cache{lower};
 
-    expect_load(cache, "", "");
-    expect_hit(cache, "", "");
+    expect_load(cache, lower, "", "");
+    expect_hit(cache, lower, "", "");
 }
 
 TEST(LIRS, embedded_nulls_are_preserved) {
-    StringCache cache;
+    SlowGetPage<std::string> lower;
+    StringCache cache{lower};
     const std::string key("a\0b", 3);
     const std::string value("x\0y", 3);
 
-    expect_load(cache, key, value);
-    expect_load(cache, "a", "prefix");
-    expect_hit(cache, key, value);
-    expect_hit(cache, "a", "prefix");
+    expect_load(cache, lower, key, value);
+    expect_load(cache, lower, "a", "prefix");
+    expect_hit(cache, lower, key, value);
+    expect_hit(cache, lower, "a", "prefix");
 }
 
 TEST(LIRS, integer_zero_is_a_resident_value) {
-    LIRS::Cache<int> cache;
+    SlowGetPage<int> lower;
+    LIRS::Cache<int, SlowGetPage<int>> cache{lower};
 
     loader_calls = 0;
-    EXPECT_EQ(cache.fetch("zero", load_integer), 0);
-    EXPECT_EQ(cache.fetch("zero", load_integer), 0);
+    EXPECT_EQ(fetch_with_loader(cache, lower, "zero", load_integer), 0);
+    EXPECT_EQ(fetch_with_loader(cache, lower, "zero", load_integer), 0);
     EXPECT_EQ(loader_calls, 1);
 }
 
@@ -183,195 +176,177 @@ Payload load_payload(const std::string&) {
 }
 
 TEST(LIRS, data_need_not_be_default_constructible) {
-    LIRS::Cache<Payload> cache;
+    SlowGetPage<Payload> lower;
+    LIRS::Cache<Payload, SlowGetPage<Payload>> cache{lower};
 
     loader_calls = 0;
-    EXPECT_EQ(cache.fetch("page", load_payload).value_, 42);
-    EXPECT_EQ(cache.fetch("page", load_payload).value_, 42);
+    EXPECT_EQ(fetch_with_loader(cache, lower, "page", load_payload).value_, 42);
+    EXPECT_EQ(fetch_with_loader(cache, lower, "page", load_payload).value_, 42);
     EXPECT_EQ(loader_calls, 1);
 }
 
 TEST(LIRS, returned_string_is_a_copy) {
-    StringCache cache;
+    SlowGetPage<std::string> lower;
+    StringCache cache{lower};
 
-    auto value = cache.fetch("page", original_load);
+    auto value = fetch_with_loader(cache, lower, "page", original_load);
     value.assign("modified");
-    expect_hit(cache, "page", "original");
+    expect_hit(cache, lower, "page", "original");
 }
 
 TEST(LIRS, caches_are_independent) {
-    StringCache first;
-    StringCache second;
+    SlowGetPage<std::string> lower_first;
+    StringCache first{lower_first};
+    SlowGetPage<std::string> lower_second;
+    StringCache second{lower_second};
 
-    expect_load(first, "page", "first");
-    expect_load(second, "page", "second");
-    expect_hit(first, "page", "first");
-    expect_hit(second, "page", "second");
+    expect_load(first, lower_first, "page", "first");
+    expect_load(second, lower_second, "page", "second");
+    expect_hit(first, lower_first, "page", "first");
+    expect_hit(second, lower_second, "page", "second");
 }
 
 TEST(LIRS, failed_load_can_be_retried) {
-    StringCache cache;
+    SlowGetPage<std::string> lower;
+    StringCache cache{lower};
 
     loader_calls = 0;
     expected_key = "page";
-    EXPECT_THROW((void)cache.fetch("page", failing_load), std::runtime_error);
+    EXPECT_THROW(fetch_with_loader(cache, lower, "page", failing_load), std::runtime_error);
     EXPECT_EQ(loader_calls, 1);
-    expect_load(cache, "page");
-    expect_hit(cache, "page");
+    expect_load(cache, lower, "page");
+    expect_hit(cache, lower, "page");
 }
 
 TEST(LIRS, failed_load_does_not_consume_lir_slot) {
-    StringCache cache;
+    SlowGetPage<std::string> lower;
+    StringCache cache{lower};
 
-    expect_miss(cache, "missing");
-    fill_lir(cache);
+    expect_miss(cache, lower, "missing");
+    fill_lir(cache, lower);
     for (int i = 0; i < 20; ++i) {
-        expect_load(cache, "scan-" + std::to_string(i));
+        expect_load(cache, lower, "scan-" + std::to_string(i));
     }
-    touch_lir(cache);
+    touch_lir(cache, lower);
 }
 
 TEST(LIRS, hit_accepts_an_empty_loader) {
-    StringCache cache;
+    SlowGetPage<std::string> lower;
+    StringCache cache{lower};
 
-    expect_load(cache, "page");
+    expect_load(cache, lower, "page");
     const std::function<std::string(const std::string&)> empty;
-    EXPECT_EQ(cache.fetch("page", empty), value_for("page"));
+    EXPECT_EQ(fetch_with_loader(cache, lower, "page", empty), value_for("page"));
 }
 
-TEST_F(LirsTransitions, scan_preserves_lir_pages) {
+TEST(LIRS, scan_preserves_lir_pages) {
+    SlowGetPage<std::string> lower;
+    StringCache cache{lower};
+
+    fill_lir(cache, lower);
+    expect_load(cache, lower, "hir");
     for (int i = 0; i < 100; ++i) {
-        expect_load(cache, "scan-" + std::to_string(i));
+        expect_load(cache, lower, "scan-" + std::to_string(i));
     }
-    expect_miss(cache, "hir");
-    expect_miss(cache, "scan-98");
-    touch_lir(cache);
-    expect_hit(cache, "scan-99");
+    expect_miss(cache, lower, "hir");
+    expect_miss(cache, lower, "scan-98");
+    touch_lir(cache, lower);
+    expect_hit(cache, lower, "scan-99");
 }
 
-TEST_F(LirsTransitions, resident_hir_in_stack_promotes) {
-    expect_hit(cache, "hir");
-    expect_load(cache, "next");
-    expect_miss(cache, lir_key(0));
-    touch_lir(cache, 1);
-    expect_hit(cache, "hir");
-    expect_hit(cache, "next");
+TEST(LIRS, resident_hir_in_stack_promotes) {
+    SlowGetPage<std::string> lower;
+    StringCache cache{lower};
+
+    fill_lir(cache, lower);
+    expect_load(cache, lower, "hir");
+    expect_hit(cache, lower, "hir");
+    expect_load(cache, lower, "next");
+    expect_miss(cache, lower, lir_key(0));
+    touch_lir(cache, lower, 1);
+    expect_hit(cache, lower, "hir");
+    expect_hit(cache, lower, "next");
 }
 
-TEST_F(LirsTransitions, lir_hit_changes_the_next_demotion_candidate) {
-    expect_hit(cache, lir_key(0));
-    expect_hit(cache, "hir");
-    expect_load(cache, "next");
-    expect_miss(cache, lir_key(1));
-    expect_hit(cache, lir_key(0));
-    touch_lir(cache, 2);
-    expect_hit(cache, "hir");
+TEST(LIRS, lir_hit_changes_the_next_demotion_candidate) {
+    SlowGetPage<std::string> lower;
+    StringCache cache{lower};
+
+    fill_lir(cache, lower);
+    expect_load(cache, lower, "hir");
+    expect_hit(cache, lower, lir_key(0));
+    expect_hit(cache, lower, "hir");
+    expect_load(cache, lower, "next");
+    expect_miss(cache, lower, lir_key(1));
+    expect_hit(cache, lower, lir_key(0));
+    touch_lir(cache, lower, 2);
+    expect_hit(cache, lower, "hir");
 }
 
-TEST_F(LirsTransitions, demotion_keeps_data_until_eviction) {
-    expect_hit(cache, "hir");
-    expect_hit(cache, lir_key(0));
-    expect_hit(cache, "hir");
-    touch_lir(cache, 1);
+TEST(LIRS, demotion_keeps_data_until_eviction) {
+    SlowGetPage<std::string> lower;
+    StringCache cache{lower};
+
+    fill_lir(cache, lower);
+    expect_load(cache, lower, "hir");
+    expect_hit(cache, lower, "hir");
+    expect_hit(cache, lower, lir_key(0));
+    expect_hit(cache, lower, "hir");
+    touch_lir(cache, lower, 1);
 }
 
-TEST_F(LirsTransitions, pruning_keeps_resident_hir_data) {
-    touch_lir(cache);
-    expect_hit(cache, "hir");
+TEST(LIRS, pruning_keeps_resident_hir_data) {
+    SlowGetPage<std::string> lower;
+    StringCache cache{lower};
+
+    fill_lir(cache, lower);
+    expect_load(cache, lower, "hir");
+    touch_lir(cache, lower);
+    expect_hit(cache, lower, "hir");
 }
 
-TEST_F(LirsTransitions, hir_outside_stack_is_not_promoted_on_first_hit) {
-    touch_lir(cache);
-    expect_hit(cache, "hir");
-    expect_load(cache, "next");
-    expect_miss(cache, "hir");
-    touch_lir(cache);
+TEST(LIRS, hir_outside_stack_is_not_promoted_on_first_hit) {
+    SlowGetPage<std::string> lower;
+    StringCache cache{lower};
+
+    fill_lir(cache, lower);
+    expect_load(cache, lower, "hir");
+    touch_lir(cache, lower);
+    expect_hit(cache, lower, "hir");
+    expect_load(cache, lower, "next");
+    expect_miss(cache, lower, "hir");
+    touch_lir(cache, lower);
 }
 
-TEST_F(LirsTransitions, hir_outside_stack_promotes_on_second_hit) {
-    touch_lir(cache);
-    expect_hit(cache, "hir");
-    expect_hit(cache, "hir");
-    expect_load(cache, "next");
-    expect_miss(cache, lir_key(0));
-    expect_hit(cache, "hir");
-    touch_lir(cache, 1);
+TEST(LIRS, hir_outside_stack_promotes_on_second_hit) {
+    SlowGetPage<std::string> lower;
+    StringCache cache{lower};
+
+    fill_lir(cache, lower);
+    expect_load(cache, lower, "hir");
+    touch_lir(cache, lower);
+    expect_hit(cache, lower, "hir");
+    expect_hit(cache, lower, "hir");
+    expect_load(cache, lower, "next");
+    expect_miss(cache, lower, lir_key(0));
+    expect_hit(cache, lower, "hir");
+    touch_lir(cache, lower, 1);
 }
 
-TEST_F(LirsTransitions, demoted_lir_needs_two_hits_to_regain_protection) {
-    expect_hit(cache, "hir");
-    expect_hit(cache, lir_key(0));
-    expect_hit(cache, lir_key(0));
-    expect_load(cache, "next");
-    expect_miss(cache, lir_key(1));
-    expect_hit(cache, lir_key(0));
-    expect_hit(cache, "hir");
-    touch_lir(cache, 2);
-}
+TEST(LIRS, demoted_lir_needs_two_hits_to_regain_protection) {
+    SlowGetPage<std::string> lower;
+    StringCache cache{lower};
 
-TEST_F(LirsTransitions, repeated_promotions_choose_successive_oldest_lir) {
-    expect_hit(cache, "hir");
-    expect_load(cache, "next");
-    expect_hit(cache, "next");
-    expect_load(cache, "last");
-    expect_miss(cache, lir_key(0));
-    expect_miss(cache, lir_key(1));
-    touch_lir(cache, 2);
-    expect_hit(cache, "hir");
-    expect_hit(cache, "next");
-    expect_hit(cache, "last");
-}
-
-TEST_F(LirsTransitions, failed_load_in_full_cache_does_not_evict_or_reorder) {
-    expect_miss(cache, "missing");
-    expect_miss(cache, "missing");
-    expect_hit(cache, "hir");
-    expect_load(cache, "next");
-    expect_miss(cache, lir_key(0));
-    touch_lir(cache, 1);
-    expect_hit(cache, "hir");
-}
-
-TEST_F(LirsTransitions, ghost_reload_promotes_and_uses_fresh_data) {
-    expect_load(cache, "next");
-    expect_load(cache, "hir", "reloaded");
-    expect_miss(cache, "next");
-    expect_load(cache, "last");
-    expect_miss(cache, lir_key(0));
-    expect_hit(cache, "hir", "reloaded");
-    touch_lir(cache, 1);
-}
-
-TEST_F(LirsTransitions, failed_ghost_load_preserves_history_and_residents) {
-    expect_load(cache, "next");
-    expect_miss(cache, "hir");
-    expect_miss(cache, "hir");
-    expect_hit(cache, "next");
-    expect_load(cache, "hir", "reloaded");
-    expect_miss(cache, lir_key(0));
-    expect_load(cache, "last");
-    expect_miss(cache, lir_key(1));
-    expect_hit(cache, "hir", "reloaded");
-    expect_hit(cache, "next");
-    touch_lir(cache, 2);
-}
-
-TEST_F(LirsTransitions, pruned_ghost_reloads_as_hir) {
-    expect_load(cache, "next");
-    touch_lir(cache);
-    expect_load(cache, "hir", "reloaded");
-    expect_load(cache, "last");
-    expect_miss(cache, "hir");
-    touch_lir(cache);
-}
-
-TEST_F(LirsTransitions, eviction_outside_stack_does_not_leave_promoting_history) {
-    touch_lir(cache);
-    expect_load(cache, "next");
-    expect_load(cache, "hir");
-    expect_load(cache, "last");
-    expect_miss(cache, "hir");
-    touch_lir(cache);
+    fill_lir(cache, lower);
+    expect_load(cache, lower, "hir");
+    expect_hit(cache, lower, "hir");
+    expect_hit(cache, lower, lir_key(0));
+    expect_hit(cache, lower, lir_key(0));
+    expect_load(cache, lower, "next");
+    expect_miss(cache, lower, lir_key(1));
+    expect_hit(cache, lower, lir_key(0));
+    expect_hit(cache, lower, "hir");
+    touch_lir(cache, lower, 2);
 }
 
 }

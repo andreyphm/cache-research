@@ -18,14 +18,10 @@ enum class Status {
 
 template <typename Data, typename Lower> class Cache {
 public:
-    static constexpr std::size_t capacity = 8;
-    static constexpr std::size_t hir_capacity = 1;
-    static constexpr std::size_t lir_capacity = capacity - hir_capacity;
-
     using Entry = std::pair<std::string, Data>;
 
     Cache(Lower& lower_cache, std::size_t capacity)
-        : capacity_(capacity), lir_capacity_(capacity - hir_capacity),
+        : capacity_(capacity), lir_capacity_(capacity * 99 / 100),
           lower_cache_(lower_cache) {}
 
     Data fetch(const std::string& url) {

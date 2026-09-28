@@ -21,10 +21,6 @@ enum class Status {
 
 template <typename Data, typename Lower> class Cache {
 public:
-    static constexpr std::size_t capacity = 8;
-    static constexpr std::size_t kin = (capacity + 3) / 4;
-    static constexpr std::size_t kout = (capacity + 1) / 2;
-
     using Entry = std::pair<std::string, Data>;
 
     Cache(Lower& lower_cache, std::size_t capacity)

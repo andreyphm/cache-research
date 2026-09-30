@@ -8,6 +8,7 @@
 ## Содержание
 
 - [Сборка](#сборка)
+- [Использование](#использование)
 - [Алгоритмы кэширования](#алгоритмы-кэширования)
     - [LFU](#lfu-least-frequently-used)
     - [2Q](#2q-two-queues)
@@ -38,6 +39,31 @@ git clone https://github.com/andreyphm/Cache_research.git
 cd Cache_research
 cmake -S . -B build
 cmake --build build
+```
+
+## Использование
+
+Общий формат команды:
+
+```bash
+./build/cache_research.out <config-file>
+```
+
+Файл конфигурации задаёт число уровней и алгоритмы кэширования на каждом из уровней: `LFU`, `ARC`, `2Q` или `LIRS` от верхнего уровня к нижнему.
+Через стандартный ввод передаются ёмкость уровней, число запросов и ключи. Программа выводит количество попаданий.
+
+Пример содержимого файла конфигурации:
+
+```text
+2
+LFU ARC
+```
+
+Пример ввода:
+
+```text
+2 4
+1 2 1 2
 ```
 
 ## Алгоритмы кэширования
@@ -184,7 +210,7 @@ ctest --test-dir build --output-on-failure
 
 ### Запуск тестов конкретного кэша
 
-`<target>` - выбранный кэш (`ARC` / `LFU` / `2Q` / `LIRS` / `belady`)
+`<target>` - одна из целей (`ARC` / `LFU` / `2Q` / `LIRS` / `belady` / `interface`)
 
 Для CMake/CTest **3.20 и новее**:
 
@@ -203,19 +229,26 @@ ctest --test-dir build -L <target> --output-on-failure
 ```text
 Cache_research/
 ├── headers/
-│   ├── LFU_cache.hpp    # LFU кэш
-│   ├── 2Q_cache.hpp     # 2Q кэш
-│   ├── ARC_cache.hpp    # ARC кэш
-│   ├── LIRS_cache.hpp   # LIRS кэш
-│   └── belady_cache.hpp # Belady кэш
+│   ├── 2Q_cache.hpp        # 2Q кэш
+│   ├── ARC_cache.hpp       # ARC кэш
+│   ├── LFU_cache.hpp       # LFU кэш
+│   ├── LIRS_cache.hpp      # LIRS кэш
+│   ├── belady_cache.hpp    # Belady кэш
+│   ├── cache_runner.hpp    # запуск многоуровневой системы
+│   ├── config.hpp          # конфигурация уровней
+│   └── SlowGetPage.hpp     # источник данных для кэшей
 ├── source/
-│   └── main.cpp        # демонстрационная программа
+│   ├── cache_runner.cpp    # многоуровневая система кэшей
+│   ├── config.cpp          # разбор файла конфигурации
+│   └── main.cpp            # консольный интерфейс
 ├── tests/
-│   ├── LFU_tests.cpp    # тесты LFU
-│   ├── 2Q_tests.cpp     # тесты 2Q
-│   ├── ARC_tests.cpp    # тесты ARC
-│   ├── LIRS_tests.cpp   # тесты LIRS
-│   ├── belady_tests.cpp # тесты Belady
-│   └── CMakeLists.txt   # GoogleTest, обнаружение и запуск тестов
-└── CMakeLists.txt      # сборка программы, подключение тестов
+│   ├── 2Q_tests.cpp        # тесты 2Q
+│   ├── ARC_tests.cpp       # тесты ARC
+│   ├── LFU_tests.cpp       # тесты LFU
+│   ├── LIRS_tests.cpp      # тесты LIRS
+│   ├── belady_tests.cpp    # тесты Belady
+│   ├── interface_tests.cpp # тесты интерфейса
+│   └── CMakeLists.txt      # сборка и регистрация тестов
+├── config.txt              # конфигурация уровней кэша
+└── CMakeLists.txt          # сборка программы и тестов
 ```

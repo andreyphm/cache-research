@@ -22,3 +22,8 @@ foreach(cache IN ITEMS ARC LFU 2Q LIRS belady)
     target_compile_options(${cache}_tests PRIVATE -Wall -Wextra -Wpedantic)
     gtest_discover_tests(${cache}_tests PROPERTIES TIMEOUT 10 LABELS "${cache}")
 endforeach()
+
+add_executable(interface_tests interface_tests.cpp)
+target_link_libraries(interface_tests PRIVATE cache_research GTest::gtest_main)
+target_compile_options(interface_tests PRIVATE -Wall -Wextra -Wpedantic)
+gtest_discover_tests(interface_tests PROPERTIES TIMEOUT 10 LABELS "interface")

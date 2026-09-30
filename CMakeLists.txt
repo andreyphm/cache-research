@@ -4,7 +4,8 @@ project(cache_research LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 
 set(SRCS
-    source/main.cpp)
+    source/config.cpp
+    source/cache_runner.cpp)
 
 add_library(cache_research STATIC ${SRCS})
 target_include_directories(cache_research PUBLIC "headers")

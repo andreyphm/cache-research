@@ -29,7 +29,6 @@ public:
     Data fetch(const std::string& url) {
         PageLocation* location = nullptr;
         std::optional<Data> loaded;
-        std::optional<Entry> entry;
 
         switch(find(url, location)) {
             case Status::success:
@@ -38,19 +37,14 @@ public:
             case Status::found_in_ghost: {
                 loaded = lower_cache_.fetch(url);
                 location->iterator_->data_ = loaded;
-                entry = restore_from_ghost(*location);
+                restore_from_ghost(*location);
                 break;
             }
 
             case Status::not_found:
                 loaded = lower_cache_.fetch(url);
-                entry = insert(url, *loaded);
+                insert(url, *loaded);
                 break;
-        }
-
-        lower_cache_.remove(url);
-        if (entry != std::nullopt) {
-            lower_cache_.insert(entry->first, entry->second);
         }
 
         return *loaded;

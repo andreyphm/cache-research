@@ -31,11 +31,7 @@ public:
         }
 
         Data loaded = lower_cache_.fetch(url);
-        auto entry = insert(url, loaded);
-        lower_cache_.remove(url);
-        if (entry) {
-            lower_cache_.insert(entry->first, entry->second);
-        }
+        insert(url, loaded);
 
         return loaded;
     }

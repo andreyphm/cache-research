@@ -1,0 +1,15 @@
+{
+  "capacities": [64, 256, 1024],
+  "requests_per_capacity": 120,
+  "seeds": [1, 2, 3, 4, 5],
+  "scenarios": [
+    {"family": "uniform", "parameters": {}, "scaled": {"w": [8, 0]}},
+    {"family": "normal", "parameters": {}, "scaled": {"w": [8, 0], "sigma": [2, 0]}},
+    {"family": "zipf", "parameters": {"alpha": 1.2}, "scaled": {"w": [8, 0]}},
+    {"family": "hotspot", "parameters": {"p": 0.8}, "scaled": {"w": [8, 0], "hot": [2, 0]}},
+    {"family": "scan", "parameters": {}, "scaled": {"w": [6, 0], "shift": [1.5, 0]}},
+    {"family": "hot_scan", "parameters": {}, "scaled": {"hot": [2, 0], "hot_requests": [4, 0], "scan": [4, 0]}},
+    {"family": "cyclic", "parameters": {}, "scaled": {"w": [6, 0]}},
+    {"family": "streams", "parameters": {"weights": [1, 1, 1]}, "scaled": {"w": [4, 0]}}
+  ]
+}

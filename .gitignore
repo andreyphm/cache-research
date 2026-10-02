@@ -1,2 +1,7 @@
 build
 build-tests
+build-bench
+__pycache__
+.vscode
+benchmarks/data
+benchmarks/results

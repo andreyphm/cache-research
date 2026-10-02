@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <functional>
 #include <iterator>
 #include <list>
 #include <memory>
@@ -19,10 +20,11 @@ enum class Status {
 template <typename Data, typename Lower> class Cache {
 public:
     using Entry = std::pair<std::string, Data>;
+    using EvictionCallback = std::function<void(const std::string&)>;
 
-    Cache(Lower& lower_cache, std::size_t capacity)
+    Cache(Lower& lower_cache, std::size_t capacity, const EvictionCallback& invalidate_upper = {})
         : capacity_(capacity), lir_capacity_(capacity * 99 / 100),
-          lower_cache_(lower_cache) {}
+          lower_cache_(lower_cache), invalidate_upper_(invalidate_upper) {}
 
     Data fetch(const std::string& url) {
         PageInfo* info = nullptr;
@@ -85,6 +87,9 @@ public:
         }
 
         const auto& info = found->second;
+        if (info.data_ && invalidate_upper_) {
+            invalidate_upper_(url);
+        }
         if (info.data_ && !info.q_iterator_) {
             --lir_count;
         }
@@ -122,6 +127,7 @@ private:
     PageList list_q_;
     std::unordered_map<std::string, PageInfo> map_;
     Lower& lower_cache_;
+    EvictionCallback invalidate_upper_;
 
     Status find(const std::string& url, PageInfo*& info) {
         info = nullptr;
@@ -204,6 +210,9 @@ private:
         auto& info = found->second;
         Entry entry{page->url_, *info.data_};
 
+        if (invalidate_upper_) {
+            invalidate_upper_(page->url_);
+        }
         info.data_.reset();
         info.q_iterator_.reset();
 

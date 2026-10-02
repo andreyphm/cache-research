@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <functional>
 #include <iterator>
 #include <list>
 #include <memory>
@@ -20,9 +21,11 @@ enum class Status {
 template <typename Data, typename Lower> class Cache {
 public:
     using Entry = std::pair<std::string, Data>;
+    using EvictionCallback = std::function<void(const std::string&)>;
 
-    Cache(Lower& lower_cache, std::size_t capacity)
-        : capacity_(capacity), lower_cache_(lower_cache) {}
+    Cache(Lower& lower_cache, std::size_t capacity, const EvictionCallback& invalidate_upper = {})
+        : capacity_(capacity), lower_cache_(lower_cache),
+          invalidate_upper_(invalidate_upper) {}
 
     Data fetch(const std::string& url) {
         PageLocation* location = nullptr;
@@ -92,6 +95,7 @@ private:
     PageList list_b2_;
     std::unordered_map<std::string, PageLocation> map_;
     Lower& lower_cache_;
+    EvictionCallback invalidate_upper_;
 
     Status find(const std::string& url, PageLocation*& location) {
         location = nullptr;
@@ -176,6 +180,9 @@ private:
         const auto page = std::prev(source.end());
         Entry entry{page->url_, *page->data_};
 
+        if (invalidate_upper_) {
+            invalidate_upper_(page->url_);
+        }
         page->data_.reset();
         ghost.splice(ghost.begin(), source, page);
         map_.at(page->url_).list_ = &ghost;
@@ -186,6 +193,9 @@ private:
         std::optional<Entry> entry;
         if (page->data_) {
             entry.emplace(page->url_, *page->data_);
+            if (invalidate_upper_) {
+                invalidate_upper_(page->url_);
+            }
         }
         map_.erase(page->url_);
         list.erase(page);

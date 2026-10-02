@@ -67,6 +67,18 @@ TEST(Interface, counts_hits_in_third_level) {
     EXPECT_EQ(count_hits(config, {2, 2, 2}, 7, input), 3u);
 }
 
+TEST(Interface, reports_hits_for_each_level) {
+    Config config{{CachePolicy::LFU, CachePolicy::LFU, CachePolicy::LFU}};
+    const std::vector<std::size_t> capacities{1, 2, 3};
+    const std::vector<std::string> requests{"A", "A", "B", "A", "C", "B"};
+
+    const auto statistics = count_hits_by_level(config, capacities, requests);
+
+    EXPECT_EQ(statistics.level_hits, (std::vector<std::size_t>{1, 1, 1}));
+    EXPECT_EQ(statistics.storage_misses, 3u);
+    EXPECT_EQ(statistics.total_hits(), 3u);
+}
+
 TEST(Interface, accepts_different_increasing_level_capacities) {
     Config config{{CachePolicy::LFU, CachePolicy::ARC, CachePolicy::TWO_Q}};
     const std::vector<std::size_t> capacities{4, 8, 16};

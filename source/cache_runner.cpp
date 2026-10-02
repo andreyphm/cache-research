@@ -6,6 +6,7 @@
 #include "SlowGetPage.hpp"
 
 #include <deque>
+#include <numeric>
 #include <stdexcept>
 #include <string>
 #include <variant>
@@ -21,6 +22,9 @@ struct Level {
 
     std::variant<Storage, Lfu, Arc, TwoQ, Lirs> cache;
     Level* upper = nullptr;
+    Level* lower = nullptr;
+    std::size_t* hit_count = nullptr;
+    std::size_t fetch_count = 0;
 
     Level(std::size_t& misses) {
         std::get<Storage>(cache).load = [&misses](const std::string& key) {
@@ -29,7 +33,9 @@ struct Level {
         };
     }
 
-    Level(CachePolicy policy, std::size_t capacity, Level& lower_level) {
+    Level(CachePolicy policy, std::size_t capacity, Level& lower_level,
+          std::size_t& level_hits)
+        : lower(&lower_level), hit_count(&level_hits) {
         lower_level.upper = this;
         const auto invalidate_upper = [this](const std::string& key) {
             if (upper != nullptr) {
@@ -53,7 +59,16 @@ struct Level {
     }
 
     std::string fetch(const std::string& key) {
-        return std::visit([&](auto& value) { return value.fetch(key); }, cache);
+        ++fetch_count;
+        if (lower == nullptr) {
+            return std::visit([&](auto& value) { return value.fetch(key); }, cache);
+        }
+        const auto lower_fetches = lower->fetch_count;
+        const auto data = std::visit([&](auto& value) { return value.fetch(key); }, cache);
+        if (lower->fetch_count == lower_fetches) {
+            ++*hit_count;
+        }
+        return data;
     }
 
     void remove(const std::string& key) {
@@ -63,19 +78,25 @@ struct Level {
 
 } // namespace
 
-std::size_t count_hits(const Config& config, const std::vector<std::size_t>& capacities,
-                       std::size_t request_count, std::istream& input) {
+std::size_t CacheHitStatistics::total_hits() const {
+    return std::accumulate(level_hits.begin(), level_hits.end(), std::size_t{0});
+}
+
+CacheHitStatistics count_hits_by_level(
+    const Config& config, const std::vector<std::size_t>& capacities,
+    std::size_t request_count, std::istream& input) {
     std::vector<std::string> requests(request_count);
     for (auto& key : requests) {
         if (!(input >> key)) {
             throw std::runtime_error("Incomplete request sequence");
         }
     }
-    return count_hits(config, capacities, requests);
+    return count_hits_by_level(config, capacities, requests);
 }
 
-std::size_t count_hits(const Config& config, const std::vector<std::size_t>& capacities,
-                       const std::vector<std::string>& requests) {
+CacheHitStatistics count_hits_by_level(
+    const Config& config, const std::vector<std::size_t>& capacities,
+    const std::vector<std::string>& requests) {
     if (capacities.size() != config.levels.size()) {
         throw std::invalid_argument("Capacity count must match level count");
     }
@@ -88,16 +109,27 @@ std::size_t count_hits(const Config& config, const std::vector<std::size_t>& cap
         }
     }
 
-    std::size_t misses = 0;
+    CacheHitStatistics statistics;
+    statistics.level_hits.resize(config.levels.size());
     std::deque<Level> levels;
-    levels.emplace_front(misses);
+    levels.emplace_front(statistics.storage_misses);
     for (std::size_t i = config.levels.size(); i > 0; --i) {
         levels.emplace_front(config.levels[i - 1], capacities[i - 1],
-                             levels.front());
+                             levels.front(), statistics.level_hits[i - 1]);
     }
 
     for (const auto& key : requests) {
         levels.front().fetch(key);
     }
-    return requests.size() - misses;
+    return statistics;
+}
+
+std::size_t count_hits(const Config& config, const std::vector<std::size_t>& capacities,
+                       std::size_t request_count, std::istream& input) {
+    return count_hits_by_level(config, capacities, request_count, input).total_hits();
+}
+
+std::size_t count_hits(const Config& config, const std::vector<std::size_t>& capacities,
+                       const std::vector<std::string>& requests) {
+    return count_hits_by_level(config, capacities, requests).total_hits();
 }

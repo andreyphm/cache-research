@@ -6,8 +6,8 @@
 #include "SlowGetPage.hpp"
 
 #include <deque>
+#include <stdexcept>
 #include <string>
-#include <type_traits>
 #include <variant>
 
 namespace {
@@ -20,7 +20,7 @@ struct Level {
     using Lirs = LIRS::Cache<std::string, Level>;
 
     std::variant<Storage, Lfu, Arc, TwoQ, Lirs> cache;
-    Level* lower = nullptr;
+    Level* upper = nullptr;
 
     Level(std::size_t& misses) {
         std::get<Storage>(cache).load = [&misses](const std::string& key) {
@@ -29,23 +29,28 @@ struct Level {
         };
     }
 
-    Level(CachePolicy policy, std::size_t capacity, Level& lower_level)
-        : lower(&lower_level) {
+    Level(CachePolicy policy, std::size_t capacity, Level& lower_level) {
+        lower_level.upper = this;
+        const auto invalidate_upper = [this](const std::string& key) {
+            if (upper != nullptr) {
+                upper->remove(key);
+            }
+        };
         switch (policy) {
             case CachePolicy::LFU:
-                cache.emplace<Lfu>(lower_level, capacity);
+                cache.emplace<Lfu>(lower_level, capacity, invalidate_upper);
                 break;
             case CachePolicy::ARC:
-                cache.emplace<Arc>(lower_level, capacity);
+                cache.emplace<Arc>(lower_level, capacity, invalidate_upper);
                 break;
             case CachePolicy::TWO_Q:
-                cache.emplace<TwoQ>(lower_level, capacity);
+                cache.emplace<TwoQ>(lower_level, capacity, invalidate_upper);
                 break;
             case CachePolicy::LIRS:
-                cache.emplace<Lirs>(lower_level, capacity);
+                cache.emplace<Lirs>(lower_level, capacity, invalidate_upper);
                 break;
         }
-    }   
+    }
 
     std::string fetch(const std::string& key) {
         return std::visit([&](auto& value) { return value.fetch(key); }, cache);
@@ -54,34 +59,45 @@ struct Level {
     void remove(const std::string& key) {
         std::visit([&](auto& value) { value.remove(key); }, cache);
     }
-
-    void insert(const std::string& key, const std::string& data) {
-        std::visit([&](auto& value) {
-            if constexpr (!std::is_same_v<std::decay_t<decltype(value)>, Storage>) {
-                auto evicted = value.insert(key, data);
-                if (evicted) {
-                    lower->insert(evicted->first, evicted->second);
-                }
-            }
-        }, cache);
-    }
 };
 
 } // namespace
 
-std::size_t count_hits(const Config& config, std::size_t capacity,
+std::size_t count_hits(const Config& config, const std::vector<std::size_t>& capacities,
                        std::size_t request_count, std::istream& input) {
+    std::vector<std::string> requests(request_count);
+    for (auto& key : requests) {
+        if (!(input >> key)) {
+            throw std::runtime_error("Incomplete request sequence");
+        }
+    }
+    return count_hits(config, capacities, requests);
+}
+
+std::size_t count_hits(const Config& config, const std::vector<std::size_t>& capacities,
+                       const std::vector<std::string>& requests) {
+    if (capacities.size() != config.levels.size()) {
+        throw std::invalid_argument("Capacity count must match level count");
+    }
+    for (std::size_t i = 0; i < capacities.size(); ++i) {
+        if (capacities[i] == 0) {
+            throw std::invalid_argument("Cache capacity must be positive");
+        }
+        if (i > 0 && capacities[i - 1] > capacities[i]) {
+            throw std::invalid_argument("Inclusive cache capacities must not decrease");
+        }
+    }
+
     std::size_t misses = 0;
     std::deque<Level> levels;
     levels.emplace_front(misses);
-    for (auto policy = config.levels.rbegin(); policy != config.levels.rend(); ++policy) {
-        levels.emplace_front(*policy, capacity, levels.front());
+    for (std::size_t i = config.levels.size(); i > 0; --i) {
+        levels.emplace_front(config.levels[i - 1], capacities[i - 1],
+                             levels.front());
     }
 
-    for (std::size_t i = 0; i < request_count; ++i) {
-        std::string key;
-        input >> key;
+    for (const auto& key : requests) {
         levels.front().fetch(key);
     }
-    return request_count - misses;
+    return requests.size() - misses;
 }

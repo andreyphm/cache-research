@@ -1,11 +1,10 @@
 #include "cache_runner.hpp"
 #include "config.hpp"
-#include "2Q_cache.hpp"
-#include "SlowGetPage.hpp"
-
 #include <gtest/gtest.h>
 #include <algorithm>
 #include <sstream>
+#include <string>
+#include <vector>
 
 TEST(Interface, reads_levels_in_order) {
     std::istringstream input("4 ARC LFU 2Q LIRS");
@@ -51,76 +50,95 @@ TEST(Interface, uses_requested_capacity) {
         Config config{{policy}};
         std::istringstream small("1 2 1 2");
         std::istringstream large("1 2 1 2");
-        EXPECT_EQ(count_hits(config, 1, 4, small), 0u);
-        EXPECT_EQ(count_hits(config, 2, 4, large), 2u);
+        EXPECT_EQ(count_hits(config, {1}, 4, small), 0u);
+        EXPECT_EQ(count_hits(config, {2}, 4, large), 2u);
     }
 }
 
 TEST(Interface, counts_hits_in_lower_levels) {
     Config config{{CachePolicy::LFU, CachePolicy::LFU}};
     std::istringstream input("A B A C B");
-    EXPECT_EQ(count_hits(config, 2, 5, input), 2u);
+    EXPECT_EQ(count_hits(config, {2, 2}, 5, input), 2u);
 }
 
 TEST(Interface, counts_hits_in_third_level) {
     Config config{{CachePolicy::LFU, CachePolicy::LFU, CachePolicy::LFU}};
     std::istringstream input("A B A C B D C");
-    EXPECT_EQ(count_hits(config, 2, 7, input), 3u);
+    EXPECT_EQ(count_hits(config, {2, 2, 2}, 7, input), 3u);
+}
+
+TEST(Interface, accepts_different_increasing_level_capacities) {
+    Config config{{CachePolicy::LFU, CachePolicy::ARC, CachePolicy::TWO_Q}};
+    const std::vector<std::size_t> capacities{4, 8, 16};
+    const std::vector<std::string> requests{"A", "B", "A"};
+
+    EXPECT_EQ(count_hits(config, capacities, requests), 1u);
+}
+
+TEST(Interface, rejects_capacity_count_different_from_level_count) {
+    Config config{{CachePolicy::LFU, CachePolicy::ARC}};
+    const std::vector<std::size_t> capacities{4};
+    const std::vector<std::string> requests{"A"};
+
+    EXPECT_THROW(count_hits(config, capacities, requests),
+                 std::invalid_argument);
+}
+
+TEST(Interface, rejects_decreasing_capacities_for_inclusive_hierarchy) {
+    Config config{{CachePolicy::LFU, CachePolicy::ARC, CachePolicy::TWO_Q}};
+    const std::vector<std::size_t> capacities{8, 4, 16};
+    const std::vector<std::string> requests{"A"};
+
+    EXPECT_THROW(count_hits(config, capacities, requests),
+                 std::invalid_argument);
+}
+
+TEST(Interface, lower_eviction_invalidates_upper_copy) {
+    Config config{{CachePolicy::LFU, CachePolicy::LFU}};
+    const std::vector<std::size_t> capacities{2, 3};
+    const std::vector<std::string> requests{
+        "A", "B", "C", "B", "B", "D", "E", "B"
+    };
+
+    EXPECT_EQ(count_hits(config, capacities, requests), 2u);
 }
 
 TEST(Interface, ghost_entries_are_misses) {
     Config config{{CachePolicy::ARC}};
     std::istringstream input("1 1 2 3 1");
-    EXPECT_EQ(count_hits(config, 2, 5, input), 1u);
+    EXPECT_EQ(count_hits(config, {2}, 5, input), 1u);
 }
 
 TEST(Interface, empty_sequence_has_no_hits) {
     Config config{{CachePolicy::LFU, CachePolicy::ARC, CachePolicy::TWO_Q, CachePolicy::LIRS}};
     std::istringstream input;
-    EXPECT_EQ(count_hits(config, 2, 0, input), 0u);
+    EXPECT_EQ(count_hits(config, {2, 4, 8, 16}, 0, input), 0u);
 }
 
 TEST(Interface, repeated_key_hits_after_first_request) {
     for (auto policy : {CachePolicy::LFU, CachePolicy::ARC, CachePolicy::TWO_Q, CachePolicy::LIRS}) {
         Config config{{policy}};
         std::istringstream input("key key key key key");
-        EXPECT_EQ(count_hits(config, 1, 5, input), 4u);
+        EXPECT_EQ(count_hits(config, {1}, 5, input), 4u);
     }
 }
 
 TEST(Interface, processes_only_requested_number_of_keys) {
     Config config{{CachePolicy::LFU}};
     std::istringstream input("a a b b");
-    EXPECT_EQ(count_hits(config, 1, 2, input), 1u);
+    EXPECT_EQ(count_hits(config, {1}, 2, input), 1u);
 }
 
 TEST(Interface, treats_numeric_looking_keys_as_strings) {
     Config config{{CachePolicy::LFU}};
     std::istringstream input("01 1 01 1");
-    EXPECT_EQ(count_hits(config, 2, 4, input), 2u);
+    EXPECT_EQ(count_hits(config, {2}, 4, input), 2u);
 }
 
 TEST(Interface, supports_all_four_policies_in_any_order) {
     Config config{{CachePolicy::LFU, CachePolicy::ARC, CachePolicy::TWO_Q, CachePolicy::LIRS}};
     do {
         std::istringstream input("1 2 3 4 5 6 7 8 1 2 3 4 5 6 7 8");
-        EXPECT_NO_THROW(count_hits(config, 2, 16, input));
+        EXPECT_NO_THROW(count_hits(config, {2, 4, 8, 16}, 16, input));
     } while (std::next_permutation(config.levels.begin(), config.levels.end()));
-}
-
-TEST(Interface, two_q_accepts_demoted_data_for_a_ghost_key) {
-    std::size_t misses = 0;
-    SlowGetPage<std::string> source;
-    source.load = [&](const std::string& key) { ++misses; return key; };
-    TWO_Q::Cache<std::string, SlowGetPage<std::string>> cache(source, 1);
-    cache.fetch("a");
-    cache.fetch("b");
-    auto evicted = cache.insert("a", "updated");
-    ASSERT_TRUE(evicted);
-    EXPECT_EQ(evicted->first, "b");
-    EXPECT_EQ(cache.fetch("a"), "updated");
-    EXPECT_EQ(misses, 2u);
-    cache.insert("a", "again");
-    EXPECT_EQ(cache.fetch("a"), "again");
-    EXPECT_EQ(misses, 2u);
 }

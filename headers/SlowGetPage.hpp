@@ -2,7 +2,6 @@
 
 #include <functional>
 #include <string>
-#include <utility>
 
 template <typename Data> struct SlowGetPage {
     std::function<Data(const std::string&)> load;

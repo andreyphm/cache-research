@@ -9,7 +9,6 @@
 #include <unordered_map>
 #include <utility>
 #include <optional>
-#include <array>
 
 namespace TWO_Q {
 

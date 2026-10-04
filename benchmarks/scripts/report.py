@@ -71,7 +71,7 @@ def top_table(rows, ranking, metric, seeds):
 
 
 def figures(output, family_scores, level_family_scores, ranking, level_rankings,
-            access_time_ranking):
+            access_time_ranking, workload_families):
     cache = ROOT.parent / "build-bench" / "matplotlib"
     cache.mkdir(parents=True, exist_ok=True)
     os.environ.setdefault("MPLCONFIGDIR", str(cache))
@@ -129,7 +129,7 @@ def figures(output, family_scores, level_family_scores, ranking, level_rankings,
     save(fig, "ranking_access_time_levels")
 
     target = access_time_ranking[0][0]
-    workloads = list(NAMES)[::-1]
+    workloads = workload_families[::-1]
     positions = np.arange(len(workloads))
     fig, ax = plt.subplots(figsize=(11, 6), layout="constrained")
     left = np.zeros(len(workloads))
@@ -147,7 +147,7 @@ def figures(output, family_scores, level_family_scores, ranking, level_rankings,
     ax.grid(axis="x", alpha=0.2)
     save(fig, "best_access_time_workload_levels")
 
-    families = list(NAMES)
+    families = workload_families
     selected = access_time_ranking[:10]
     values = np.array([[family_scores[(f, t)] for f in families] for t, _ in selected])
     fig, ax = plt.subplots(figsize=(12, 6), layout="constrained")
@@ -206,7 +206,10 @@ def main():
         if len(trace_rows) != 64 or len(triples) != 64 or any(set(t) - policies for t in triples):
             raise ValueError("Incomplete triple set")
     families, ranking = aggregate(rows)
-    if len(ranking) != 64 or len({family for family, _ in families}) != len(NAMES):
+    workload_families = list(dict.fromkeys(
+        item["family"] for item in metadata["suite"]["scenarios"]))
+    actual_families = {family for family, _ in families}
+    if len(ranking) != 64 or actual_families != set(workload_families):
         raise ValueError("Incomplete workload set")
     level_aggregates = [aggregate(rows, metric) for metric in LEVEL_BELADY_METRICS]
     level_family_scores = [result[0] for result in level_aggregates]
@@ -220,7 +223,7 @@ def main():
     write_csv(output / "top10_belady.csv", top_belady)
     write_csv(output / "top10_access_time.csv", top_access_time)
     figures(output, families, level_family_scores, ranking, level_rankings,
-            access_time_ranking)
+            access_time_ranking, workload_families)
     metadata["analysis_source_sha256"] = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
     metadata["analysis_python"] = sys.version
     metadata["matplotlib"] = sys.modules["matplotlib"].__version__

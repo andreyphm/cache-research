@@ -66,10 +66,6 @@ public:
 
     void remove(const std::string& url) {
         const auto found = cache_.find(url);
-        if (found == cache_.end()) {
-            std::cout << url << " not found\n";
-            return;
-        }
         evict(found->second);
     }
 

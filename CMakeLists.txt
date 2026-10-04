@@ -25,7 +25,6 @@ if(Python3_Interpreter_FOUND)
         COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/benchmarks/scripts/run.py"
                 --binary $<TARGET_FILE:cache_research.out> --rerun
         COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/benchmarks/scripts/report.py"
-        DEPENDS cache_research.out
         WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
         USES_TERMINAL
         COMMENT "Run cache research and generate CSV tables and figures")

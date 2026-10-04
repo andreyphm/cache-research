@@ -32,12 +32,12 @@ void run_benchmark(std::istream& input, std::ostream& output) {
         ++misses;
         return key;
     };
-    Belady::Cache<std::string, SlowGetPage<std::string>> ideal(
-        storage, capacities.back(), requests);
+    Belady::Cache<std::string, SlowGetPage<std::string>> ideal(storage, capacities.back(), requests);
     for (const auto& key : requests) {
         ideal.fetch(key);
     }
     const auto belady_hits = count - misses;
+
     constexpr std::array policies{CachePolicy::LFU, CachePolicy::ARC,
                                   CachePolicy::TWO_Q, CachePolicy::LIRS};
     constexpr std::array names{"LFU", "ARC", "2Q", "LIRS"};

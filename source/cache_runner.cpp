@@ -33,12 +33,11 @@ struct Level {
         };
     }
 
-    Level(CachePolicy policy, std::size_t capacity, Level& lower_level,
-          std::size_t& level_hits)
+    Level(CachePolicy policy, std::size_t capacity, Level& lower_level, std::size_t& level_hits)
         : lower(&lower_level), hit_count(&level_hits) {
         lower_level.upper = this;
         const auto invalidate_upper = [this](const std::string& key) {
-            if (upper != nullptr) {
+            if (upper) {
                 upper->remove(key);
             }
         };
@@ -60,13 +59,13 @@ struct Level {
 
     std::string fetch(const std::string& key) {
         ++fetch_count;
-        if (lower == nullptr) {
+        if (!lower) {
             return std::visit([&](auto& value) { return value.fetch(key); }, cache);
         }
         const auto lower_fetches = lower->fetch_count;
         const auto data = std::visit([&](auto& value) { return value.fetch(key); }, cache);
         if (lower->fetch_count == lower_fetches) {
-            ++*hit_count;
+            ++(*hit_count);
         }
         return data;
     }
@@ -78,25 +77,19 @@ struct Level {
 
 } // namespace
 
-std::size_t CacheHitStatistics::total_hits() const {
-    return std::accumulate(level_hits.begin(), level_hits.end(), std::size_t{0});
-}
-
-CacheHitStatistics count_hits_by_level(
-    const Config& config, const std::vector<std::size_t>& capacities,
-    std::size_t request_count, std::istream& input) {
+std::vector<std::string> read_requests(std::istream& input,
+                                       std::size_t request_count) {
     std::vector<std::string> requests(request_count);
     for (auto& key : requests) {
         if (!(input >> key)) {
             throw std::runtime_error("Incomplete request sequence");
         }
     }
-    return count_hits_by_level(config, capacities, requests);
+    return requests;
 }
 
-CacheHitStatistics count_hits_by_level(
-    const Config& config, const std::vector<std::size_t>& capacities,
-    const std::vector<std::string>& requests) {
+CacheHitStatistics count_hits_by_level(const Config& config, const std::vector<std::size_t>& capacities,
+                                       const std::vector<std::string>& requests) {
     if (capacities.size() != config.levels.size()) {
         throw std::invalid_argument("Capacity count must match level count");
     }
@@ -125,11 +118,10 @@ CacheHitStatistics count_hits_by_level(
 }
 
 std::size_t count_hits(const Config& config, const std::vector<std::size_t>& capacities,
-                       std::size_t request_count, std::istream& input) {
-    return count_hits_by_level(config, capacities, request_count, input).total_hits();
-}
-
-std::size_t count_hits(const Config& config, const std::vector<std::size_t>& capacities,
                        const std::vector<std::string>& requests) {
     return count_hits_by_level(config, capacities, requests).total_hits();
+}
+
+std::size_t CacheHitStatistics::total_hits() const {
+    return std::accumulate(level_hits.begin(), level_hits.end(), std::size_t{0});
 }

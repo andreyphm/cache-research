@@ -49,7 +49,8 @@ int run_cache_command(const char* path) {
     }
 
     try {
-        std::cout << count_hits(config, capacities, request_count, std::cin) << '\n';
+        const auto requests = read_requests(std::cin, request_count);
+        std::cout << count_hits(config, capacities, requests) << '\n';
     } catch (const std::invalid_argument& error) {
         std::cerr << "Invalid cache configuration: " << error.what() << '\n';
         return 1;

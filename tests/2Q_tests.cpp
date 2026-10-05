@@ -149,7 +149,8 @@ TEST(TwoQ, integer_data) {
 }
 
 struct Payload {
-    Payload(int value) : value_(value) {}
+    Payload(const int value)
+        : value_(value) {}
     int value_;
 };
 

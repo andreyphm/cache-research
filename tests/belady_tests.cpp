@@ -82,7 +82,7 @@ TEST(Belady, empty_sequence) {
 }
 
 TEST(Belady, uses_requested_capacity) {
-    for (std::size_t capacity : {1u, 2u, 3u, 11u}) {
+    for (const std::size_t capacity : {1u, 2u, 3u, 11u}) {
         SCOPED_TRACE(capacity);
         std::vector<std::string> keys;
         for (std::size_t i = 0; i < capacity; ++i) {
@@ -180,7 +180,7 @@ TEST(Belady, integer_data) {
 }
 
 struct Payload {
-    Payload(int value) : value_(value) {}
+    Payload(const int value) : value_(value) {}
     int value_;
 };
 

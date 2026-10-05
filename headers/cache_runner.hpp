@@ -15,7 +15,7 @@ struct CacheHitStatistics {
 };
 
 std::vector<std::string> read_requests(std::istream& input,
-                                       std::size_t request_count);
+                                       const std::size_t request_count);
 
 CacheHitStatistics count_hits_by_level(const Config& config, const std::vector<std::size_t>& capacities,
                                        const std::vector<std::string>& requests);

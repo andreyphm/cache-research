@@ -47,7 +47,9 @@ void run_benchmark(std::istream& input, std::ostream& output) {
     for (std::size_t i = 0; i < policies.size(); ++i) {
         for (std::size_t j = 0; j < policies.size(); ++j) {
             for (std::size_t k = 0; k < policies.size(); ++k) {
-                Config config{{policies[i], policies[j], policies[k]}};
+                const Config config{{
+                    policies[i], policies[j], policies[k]
+                }};
                 const auto statistics = count_hits_by_level(config, capacities, requests);
                 output << capacities[0] << ',' << capacities[0] << ','
                        << capacities[1] << ',' << capacities[2] << ','

@@ -22,25 +22,25 @@ public:
     using Entry = std::pair<std::string, Data>;
     using EvictionCallback = std::function<void(const std::string&)>;
 
-    Cache(Lower& lower_cache, std::size_t capacity, const EvictionCallback& invalidate_upper = {})
+    Cache(Lower& lower_cache, const std::size_t capacity, const EvictionCallback& invalidate_upper = {})
         : capacity_(capacity), lir_capacity_(capacity * 99 / 100),
           lower_cache_(lower_cache), invalidate_upper_(invalidate_upper) {}
 
     Data fetch(const std::string& url) {
         PageInfo* info = nullptr;
-        Status found = find(url, info);
+        const Status found = find(url, info);
 
         if (found == Status::success) {
             return *info->data_;
         }
 
-        Data loaded = lower_cache_.fetch(url);
+        const Data loaded = lower_cache_.fetch(url);
         insert(url, loaded);
 
         return loaded;
     }
 
-    std::optional<Entry> insert(const std::string& url, Data data) {
+    std::optional<Entry> insert(const std::string& url, const Data& data) {
         const auto found = map_.find(url);
         if (found != map_.end()) {
             auto& info = found->second;
@@ -70,7 +70,7 @@ public:
             return std::nullopt;
         }
 
-        auto entry = make_space_in_queue();
+        const auto entry = make_space_in_queue();
         const auto added_q = list_q_.emplace(list_q_.begin(), url);
         const auto added_s = list_s_.emplace(list_s_.begin(), url);
         map_.emplace(added_q->url_, PageInfo{data, added_s, added_q});
@@ -107,7 +107,7 @@ private:
     struct Page {
         Page(const std::string& url): url_(url) {}
 
-        std::string url_;
+        const std::string url_;
     };
 
     using PageList = std::list<Page>;
@@ -119,15 +119,16 @@ private:
         std::optional<PageIterator> q_iterator_ = std::nullopt;
     };
 
-    std::size_t capacity_;
-    std::size_t lir_capacity_;
+    const std::size_t capacity_;
+    const std::size_t lir_capacity_;
     std::size_t lir_count = 0;
 
     PageList list_s_;
     PageList list_q_;
+
     std::unordered_map<std::string, PageInfo> map_;
     Lower& lower_cache_;
-    EvictionCallback invalidate_upper_;
+    const EvictionCallback invalidate_upper_;
 
     Status find(const std::string& url, PageInfo*& info) {
         info = nullptr;
@@ -178,7 +179,7 @@ private:
 
     void prune_stack() {
         while (!list_s_.empty()) {
-            auto found = map_.find(list_s_.back().url_);
+            const auto found = map_.find(list_s_.back().url_);
             auto& info = found->second;
 
             if (!info.q_iterator_ && info.data_) {
@@ -197,7 +198,7 @@ private:
     std::optional<Entry> last_lir_to_hir() {
         auto& new_hir_info = map_.find(list_s_.back().url_)->second;
 
-        auto entry = make_space_in_queue();
+        const auto entry = make_space_in_queue();
         list_q_.splice(list_q_.begin(), list_s_, std::prev(list_s_.end()));
 
         new_hir_info.s_iterator_.reset();
@@ -205,10 +206,10 @@ private:
         return entry;
     }
 
-    Entry evict_hir(PageIterator page) {
-        auto found = map_.find(page->url_);
+    Entry evict_hir(const PageIterator page) {
+        const auto found = map_.find(page->url_);
         auto& info = found->second;
-        Entry entry{page->url_, *info.data_};
+        const Entry entry{page->url_, *info.data_};
 
         if (invalidate_upper_) {
             invalidate_upper_(page->url_);

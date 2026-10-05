@@ -21,7 +21,7 @@ template <typename Data, typename Lower> class Cache {
 public:
     using EvictionCallback = std::function<void(const std::string&)>;
 
-    Cache(Lower& lower_cache, std::size_t capacity, const EvictionCallback& invalidate_upper = {})
+    Cache(Lower& lower_cache, const std::size_t capacity, const EvictionCallback& invalidate_upper = {})
         : capacity_(capacity), lower_cache_(lower_cache),
           invalidate_upper_(invalidate_upper) {}
 
@@ -33,13 +33,13 @@ public:
             return *data;
         }
 
-        Data loaded = lower_cache_.fetch(url);
+        const Data loaded = lower_cache_.fetch(url);
         insert(url, loaded);
 
         return loaded;
     }
 
-    std::optional<Entry> insert(const std::string& url, Data data) {
+    std::optional<Entry> insert(const std::string& url, const Data& data) {
         const auto found = map_.find(url);
         if (found != map_.end()) {
             found->second->data_ = data;
@@ -68,10 +68,10 @@ public:
 
 private:
     struct Page {
-        Page(const std::string& url, Data data)
+        Page(const std::string& url, const Data& data)
             : url_(url), data_(data), frequency_(0) {}
 
-        std::string url_;
+        const std::string url_;
         Data data_;
         std::size_t frequency_;
     };
@@ -79,11 +79,11 @@ private:
     using PageList = std::list<Page>;
     using PageIterator = PageList::iterator;
 
-    std::size_t capacity_;
+    const std::size_t capacity_;
     PageList pages_;
     std::unordered_map<std::string, PageIterator> map_;
     Lower& lower_cache_;
-    EvictionCallback invalidate_upper_;
+    const EvictionCallback invalidate_upper_;
 
     Status get(const std::string& url, const Data*& data) {
         const auto found = map_.find(url);
@@ -98,7 +98,7 @@ private:
         return Status::success;
     }
 
-    void promote(PageIterator page) {
+    void promote(const PageIterator page) {
         ++page->frequency_;
         auto destination = page;
         while (destination != pages_.begin()
@@ -110,8 +110,8 @@ private:
         }
     }
 
-    Entry evict(PageIterator page) {
-        Entry entry{page->url_, page->data_};
+    Entry evict(const PageIterator page) {
+        const Entry entry{page->url_, page->data_};
         if (invalidate_upper_) {
             invalidate_upper_(page->url_);
         }

@@ -46,7 +46,7 @@ std::string failing_load(const std::string& key) {
     throw std::runtime_error("load failed");
 }
 
-std::string lir_key(std::size_t index) {
+std::string lir_key(const std::size_t index) {
     return "lir-" + std::to_string(index);
 }
 
@@ -99,7 +99,8 @@ void fill_lir(StringCache& cache, SlowGetPage<std::string>& lower) {
     }
 }
 
-void touch_lir(StringCache& cache, SlowGetPage<std::string>& lower, std::size_t first = 0) {
+void touch_lir(StringCache& cache, SlowGetPage<std::string>& lower,
+               const std::size_t first = 0) {
     for (std::size_t i = first; i < test_lir_capacity; ++i) {
         expect_hit(cache, lower, lir_key(i));
     }
@@ -169,7 +170,7 @@ TEST(LIRS, integer_zero_is_a_resident_value) {
 }
 
 struct Payload {
-    Payload(int value) : value_(value) {}
+    Payload(const int value) : value_(value) {}
     int value_;
 };
 

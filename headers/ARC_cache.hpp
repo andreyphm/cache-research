@@ -23,7 +23,7 @@ public:
     using Entry = std::pair<std::string, Data>;
     using EvictionCallback = std::function<void(const std::string&)>;
 
-    Cache(Lower& lower_cache, std::size_t capacity, const EvictionCallback& invalidate_upper = {})
+    Cache(Lower& lower_cache, const std::size_t capacity, const EvictionCallback& invalidate_upper = {})
         : capacity_(capacity), lower_cache_(lower_cache),
           invalidate_upper_(invalidate_upper) {}
 
@@ -33,13 +33,13 @@ public:
             return *location->iterator_->data_;
         }
 
-        Data loaded = lower_cache_.fetch(url);
+        const Data loaded = lower_cache_.fetch(url);
         insert(url, loaded);
 
         return loaded;
     }
 
-    std::optional<Entry> insert(const std::string& url, Data data) {
+    std::optional<Entry> insert(const std::string& url, const Data& data) {
         const auto found = map_.find(url);
         if (found != map_.end()) {
             auto& location = found->second;
@@ -51,7 +51,7 @@ public:
             return std::nullopt;
         }
 
-        auto entry = make_space_for_insert();
+        const auto entry = make_space_for_insert();
         const auto added = list_t1_.emplace(list_t1_.begin(), url, data);
         map_.emplace(added->url_, PageLocation{&list_t1_, added});
         return entry;
@@ -72,9 +72,9 @@ public:
 
 private:
     struct Page {
-        Page(const std::string& url, Data data): url_(url), data_(data) {}
+        Page(const std::string& url, const Data& data): url_(url), data_(data) {}
 
-        std::string url_;
+        const std::string url_;
         std::optional<Data> data_;
     };
 
@@ -83,19 +83,20 @@ private:
 
     struct PageLocation {
         PageList* list_;
-        PageIterator iterator_;
+        const PageIterator iterator_;
     };
 
-    std::size_t capacity_;
+    const std::size_t capacity_;
     std::size_t target_t1_size_ = capacity_ / 2;
 
     PageList list_t1_;
     PageList list_t2_;
     PageList list_b1_;
     PageList list_b2_;
+
     std::unordered_map<std::string, PageLocation> map_;
     Lower& lower_cache_;
-    EvictionCallback invalidate_upper_;
+    const EvictionCallback invalidate_upper_;
 
     Status find(const std::string& url, PageLocation*& location) {
         location = nullptr;
@@ -124,7 +125,7 @@ private:
     }
 
     std::optional<Entry> restore_from_ghost(PageLocation& location) {
-        bool is_b2_hit = location.list_ == &list_b2_;
+        const bool is_b2_hit = location.list_ == &list_b2_;
         if (is_b2_hit) {
             if (target_t1_size_ > 0) {
                 --target_t1_size_;
@@ -133,7 +134,7 @@ private:
             ++target_t1_size_;
         }
 
-        auto entry = replace(*location.list_);
+        const auto entry = replace(*location.list_);
         move_to_t2(location);
         return entry;
     }
@@ -178,7 +179,7 @@ private:
 
     Entry evict_to_ghost(PageList& source, PageList& ghost) {
         const auto page = std::prev(source.end());
-        Entry entry{page->url_, *page->data_};
+        const Entry entry{page->url_, *page->data_};
 
         if (invalidate_upper_) {
             invalidate_upper_(page->url_);
@@ -189,7 +190,7 @@ private:
         return entry;
     }
 
-    std::optional<Entry> evict(PageList& list, PageIterator page) {
+    std::optional<Entry> evict(PageList& list, const PageIterator page) {
         std::optional<Entry> entry;
         if (page->data_) {
             entry.emplace(page->url_, *page->data_);

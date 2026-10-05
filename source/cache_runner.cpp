@@ -22,18 +22,19 @@ struct Level {
 
     std::variant<Storage, Lfu, Arc, TwoQ, Lirs> cache;
     Level* upper = nullptr;
-    Level* lower = nullptr;
-    std::size_t* hit_count = nullptr;
+    Level* const lower;
+    std::size_t* const hit_count;
     std::size_t fetch_count = 0;
 
-    Level(std::size_t& misses) {
+    Level(std::size_t& misses) : lower(nullptr), hit_count(nullptr) {
         std::get<Storage>(cache).load = [&misses](const std::string& key) {
             ++misses;
             return key;
         };
     }
 
-    Level(CachePolicy policy, std::size_t capacity, Level& lower_level, std::size_t& level_hits)
+    Level(const CachePolicy policy, const std::size_t capacity, Level& lower_level,
+          std::size_t& level_hits)
         : lower(&lower_level), hit_count(&level_hits) {
         lower_level.upper = this;
         const auto invalidate_upper = [this](const std::string& key) {
@@ -78,7 +79,7 @@ struct Level {
 } // namespace
 
 std::vector<std::string> read_requests(std::istream& input,
-                                       std::size_t request_count) {
+                                       const std::size_t request_count) {
     std::vector<std::string> requests(request_count);
     for (auto& key : requests) {
         if (!(input >> key)) {

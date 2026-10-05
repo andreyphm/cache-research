@@ -71,7 +71,7 @@ void expect_miss(StringCache& cache, SlowGetPage<std::string>& lower, const std:
 }
 
 struct Payload {
-    Payload(int value) : value_(value) {}
+    Payload(const int value) : value_(value) {}
     int value_;
 };
 

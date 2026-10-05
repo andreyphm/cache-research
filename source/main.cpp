@@ -11,7 +11,7 @@
 
 namespace {
 
-int run_benchmark_command(const char* path) {
+int run_benchmark_command(const char* const path) {
     std::ifstream input(path);
     if (!input) {
         std::cerr << "Cannot open benchmark trace\n";
@@ -27,7 +27,7 @@ int run_benchmark_command(const char* path) {
     return 0;
 }
 
-int run_cache_command(const char* path) {
+int run_cache_command(const char* const path) {
     std::ifstream file(path);
     Config config;
     if (!read_config(file, config)) {
@@ -68,7 +68,7 @@ void print_usage() {
 
 } // namespace
 
-int main(int argc, char* argv[]) {
+int main(const int argc, char* argv[]) {
     if (argc == 3 && std::string_view(argv[1]) == "--benchmark") {
         return run_benchmark_command(argv[2]);
     }

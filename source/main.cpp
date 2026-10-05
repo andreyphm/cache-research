@@ -1,31 +1,13 @@
 #include "cache_runner.hpp"
 #include "config.hpp"
-#include "benchmark_runner.hpp"
 
 #include <cstddef>
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
-#include <string_view>
 #include <vector>
 
 namespace {
-
-int run_benchmark_command(const char* const path) {
-    std::ifstream input(path);
-    if (!input) {
-        std::cerr << "Cannot open benchmark trace\n";
-        return 1;
-    }
-
-    try {
-        run_benchmark(input, std::cout);
-    } catch (const std::invalid_argument& error) {
-        std::cerr << "Invalid benchmark trace: " << error.what() << '\n';
-        return 1;
-    }
-    return 0;
-}
 
 int run_cache_command(const char* const path) {
     std::ifstream file(path);
@@ -62,17 +44,13 @@ int run_cache_command(const char* const path) {
 }
 
 void print_usage() {
-    std::cerr << "Usage: cache_research.out <config file>\n"
-              << "For benchmark: cache_research.out --benchmark <trace.txt>\n";
+    std::cerr << "Usage: cache_research.out <config file>\n";
 }
 
 } // namespace
 
 int main(const int argc, char* argv[]) {
-    if (argc == 3 && std::string_view(argv[1]) == "--benchmark") {
-        return run_benchmark_command(argv[2]);
-    }
-    if (argc == 2 && std::string_view(argv[1]) != "--benchmark") {
+    if (argc == 2) {
         return run_cache_command(argv[1]);
     }
 

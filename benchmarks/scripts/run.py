@@ -30,7 +30,7 @@ def score(hits, belady_hits):
 
 
 def execute(binary, trace, count, capacity):
-    completed = subprocess.run([str(binary), "--benchmark", str(trace)], check=True,
+    completed = subprocess.run([str(binary), str(trace)], check=True,
                                capture_output=True, text=True)
     rows = list(csv.DictReader(io.StringIO(completed.stdout)))
     triples = [(row["l1"], row["l2"], row["l3"]) for row in rows]

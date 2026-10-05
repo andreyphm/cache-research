@@ -288,6 +288,7 @@ Cache_research/
 │   ├── config.hpp              # конфигурация уровней
 │   └── SlowGetPage.hpp         # источник данных для кэшей
 ├── source/
+│   ├── benchmark_main.cpp      # внутренний интерфейс запуска одной трассы
 │   ├── benchmark_runner.cpp    # выполнение исследования на одной трассе
 │   ├── cache_runner.cpp        # многоуровневая система кэшей
 │   ├── config.cpp              # разбор файла конфигурации
@@ -379,10 +380,10 @@ Cache_research/
 ```bash
 python -m pip install matplotlib numpy
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build --config Release --target benchmark
+cmake --build build --config Release --target research
 ```
 
-Цель `benchmark` собирает программу, генерирует трассы, сравнивает 64 тройки с Belady и строит графики. Она доступна, если CMake нашёл Python. При необходимости путь к интерпретатору задаётся через `-DPython3_EXECUTABLE=...`. Повторный запуск заменяет результаты CSV и графики.
+Цель `research` собирает внутреннюю программу обработки трасс, генерирует нагрузки, сравнивает 64 тройки с Belady и строит графики. Она доступна, если CMake нашёл Python 3.10 или новее. При необходимости путь к интерпретатору задаётся через `-DPython3_EXECUTABLE=...`. Повторный запуск заменяет результаты CSV и графики.
 
 Параметры находятся в [suite.json](benchmarks/scripts/suite.json). `generators.py` создаёт последовательности, `run.py` запускает C++, `report.py` сохраняет сводные CSV и графики PNG. Справка по скриптам доступна через `--help` у `run.py` и `report.py`.
 

@@ -19,7 +19,7 @@ if(BUILD_TESTING)
     add_subdirectory(tests)
 endif()
 
-find_package(Python3 COMPONENTS Interpreter QUIET)
+find_package(Python3 3.10 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
     add_custom_target(benchmark
         COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/benchmarks/scripts/run.py"

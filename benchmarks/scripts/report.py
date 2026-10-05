@@ -75,9 +75,6 @@ def figures(output, family_scores, level_family_scores, ranking, level_rankings,
     cache = ROOT.parent / "build-bench" / "matplotlib"
     cache.mkdir(parents=True, exist_ok=True)
     os.environ.setdefault("MPLCONFIGDIR", str(cache))
-    deps = ROOT.parent / "build-bench" / "python-deps"
-    if deps.exists():
-        sys.path.insert(0, str(deps))
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt

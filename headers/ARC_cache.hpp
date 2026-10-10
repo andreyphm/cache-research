@@ -125,7 +125,7 @@ private:
     }
 
     std::optional<Entry> restore_from_ghost(PageLocation& location) {
-        const bool is_b2_hit = location.list_ == &list_b2_;
+        const bool is_b2_hit = (location.list_ == &list_b2_);
         if (is_b2_hit) {
             if (target_t1_size_ > 0) {
                 --target_t1_size_;
@@ -134,7 +134,7 @@ private:
             ++target_t1_size_;
         }
 
-        const auto entry = replace(*location.list_);
+        const auto entry = evict_by_policy(*location.list_);
         move_to_t2(location);
         return entry;
     }
@@ -146,7 +146,7 @@ private:
             }
 
             evict_oldest(list_b1_);
-            return replace(list_b1_);
+            return evict_by_policy(list_b1_);
         }
 
         const auto total_size = map_.size();
@@ -158,10 +158,10 @@ private:
             evict_oldest(list_b2_);
         }
 
-        return replace(list_b1_);
+        return evict_by_policy(list_b1_);
     }
 
-    std::optional<Entry> replace(const PageList& origin) {
+    std::optional<Entry> evict_by_policy(const PageList& trigger_list) {
         if (list_t1_.size() + list_t2_.size() < capacity_) {
             return std::nullopt;
         }
@@ -170,7 +170,7 @@ private:
         }
 
         const auto size = list_t1_.size();
-        if (list_t2_.empty() || size > target_t1_size_ || (&origin == &list_b2_ && size == target_t1_size_)) {
+        if (list_t2_.empty() || size > target_t1_size_ || (&trigger_list == &list_b2_ && size == target_t1_size_)) {
             return evict_to_ghost(list_t1_, list_b1_);
         } else {
             return evict_to_ghost(list_t2_, list_b2_);

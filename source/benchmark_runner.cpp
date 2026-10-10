@@ -1,7 +1,6 @@
 #include "benchmark_runner.hpp"
 #include "cache_runner.hpp"
 #include "belady_cache.hpp"
-#include "SlowGetPage.hpp"
 
 #include <array>
 #include <stdexcept>
@@ -27,14 +26,13 @@ void run_benchmark(std::istream& input, std::ostream& output) {
         throw std::invalid_argument("Unexpected keys after trace");
     }
     std::size_t misses = 0;
-    SlowGetPage<std::string> storage;
-    storage.load = [&misses](const std::string& key) {
+    const auto load = [&misses](const std::string& key) {
         ++misses;
         return key;
     };
-    Belady::Cache<std::string, SlowGetPage<std::string>> ideal(storage, capacities.back(), requests);
+    Belady::Cache<std::string> ideal(capacities.back(), requests);
     for (const auto& key : requests) {
-        ideal.fetch(key);
+        ideal.fetch(key, load);
     }
     const auto belady_hits = count - misses;
 

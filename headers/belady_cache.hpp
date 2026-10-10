@@ -1,15 +1,13 @@
 #pragma once
 
 #include <cstddef>
-#include <iostream>
 #include <limits>
 #include <list>
 #include <memory>
-#include <optional>
 #include <queue>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
-#include <utility>
 #include <vector>
 
 namespace Belady {
@@ -19,54 +17,27 @@ enum class Status {
     not_found
 };
 
-template <typename Data, typename Lower> class Cache {
+template <typename Data> class Cache {
 public:
-    using Entry = std::pair<std::string, Data>;
-
-    Cache(Lower& lower_cache, const std::size_t capacity, const std::vector<std::string>& requests)
-        : capacity_(capacity), lower_cache_(lower_cache) {
+    Cache(const std::size_t capacity, const std::vector<std::string>& requests)
+        : capacity_(capacity) {
+        if (capacity_ == 0) {
+            throw std::invalid_argument("Cache capacity must be positive");
+        }
         index_requests(requests);
     }
 
-    Data fetch(const std::string& url) {
+    template <typename Loader> Data fetch(const std::string& url, const Loader& loader) {
         const std::size_t next_use = process_request(url);
         const Data* data = nullptr;
         if (get(url, next_use, data) == Status::success) {
             return *data;
         }
 
-        const Data loaded = lower_cache_.fetch(url);
-        const auto entry = insert(url, loaded);
-        lower_cache_.remove(url);
-        if (entry) {
-            lower_cache_.insert(entry->first, entry->second);
-        }
+        const Data loaded = loader(url);
+        insert(url, loaded);
 
         return loaded;
-    }
-
-    std::optional<Entry> insert(const std::string& url, const Data& data) {
-        const auto next_use = next_request(url);
-        const auto found = cache_.find(url);
-        if (found != cache_.end()) {
-            found->second->data_ = data;
-            found->second->next_use_ = next_use;
-            return std::nullopt;
-        }
-
-        std::optional<Entry> entry;
-        if (pages_.size() >= capacity_) {
-            entry = evict();
-        }
-
-        const auto added = pages_.emplace(pages_.end(), url, data, next_use);
-        cache_.emplace(added->url_, added);
-        return entry;
-    }
-
-    void remove(const std::string& url) {
-        const auto found = cache_.find(url);
-        evict(found->second);
     }
 
 private:
@@ -85,10 +56,10 @@ private:
     static constexpr std::size_t never_ = std::numeric_limits<std::size_t>::max();
 
     const std::size_t capacity_;
+    std::size_t current_position_ = 0;
     PageList pages_;
     std::unordered_map<std::string, PageIterator> cache_;
     std::unordered_map<std::string, std::queue<std::size_t>> request_positions_;
-    Lower& lower_cache_;
 
     void index_requests(const std::vector<std::string>& requests) {
         for (std::size_t pos = 0; pos < requests.size(); pos++) {
@@ -98,8 +69,14 @@ private:
 
     std::size_t process_request(const std::string& url) {
         const auto found = request_positions_.find(url);
+        if (found == request_positions_.end() || found->second.empty()
+            || found->second.front() != current_position_) {
+            throw std::invalid_argument("Request does not match indexed sequence");
+        }
+
         auto& positions = found->second;
         positions.pop();
+        ++current_position_;
 
         return positions.empty() ? never_ : positions.front();
     }
@@ -107,8 +84,8 @@ private:
     std::size_t next_request(const std::string& url) const {
         const auto found = request_positions_.find(url);
         return (found == request_positions_.end() || found->second.empty())
-                   ? never_
-                   : found->second.front();
+                ? never_
+                : found->second.front();
     }
 
     Status get(const std::string& url, const std::size_t next_use, const Data*& data) {
@@ -125,7 +102,16 @@ private:
         return Status::success;
     }
 
-    Entry evict() {
+    void insert(const std::string& url, const Data& data) {
+        if (pages_.size() == capacity_) {
+            evict();
+        }
+
+        const auto added = pages_.emplace(pages_.end(), url, data, next_request(url));
+        cache_.emplace(added->url_, added);
+    }
+
+    void evict() {
         auto victim = pages_.begin();
         for (auto page = pages_.begin(); page != pages_.end(); page++) {
             if (page->next_use_ > victim->next_use_) {
@@ -133,14 +119,8 @@ private:
             }
         }
 
-        return evict(victim);
-    }
-
-    Entry evict(const PageIterator page) {
-        const Entry entry{page->url_, page->data_};
-        cache_.erase(page->url_);
-        pages_.erase(page);
-        return entry;
+        cache_.erase(victim->url_);
+        pages_.erase(victim);
     }
 };
 

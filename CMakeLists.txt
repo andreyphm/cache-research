@@ -32,5 +32,4 @@ if(Python3_Interpreter_FOUND)
         WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
         USES_TERMINAL
         COMMENT "Run cache research and generate CSV tables and figures")
-    add_dependencies(research cache_benchmark.out)
 endif()

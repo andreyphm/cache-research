@@ -26,7 +26,7 @@
 
 Требования:
 
-- CMake 3.16 или новее;
+- [CMake](https://cmake.org/cmake/help/latest/) 3.16 или новее;
 - компилятор с поддержкой C++20.
 
 Установка инструментов сборки:
@@ -245,7 +245,7 @@ LFU ARC
 
 ## Тестирование
 
-Тесты используют **GoogleTest 1.17.0** и запускаются через **CTest**. Конфигурация находится в [`tests/CMakeLists.txt`](tests/CMakeLists.txt).
+Тесты используют [**GoogleTest 1.17.0**](https://google.github.io/googletest/) и запускаются через [**CTest**](https://cmake.org/cmake/help/latest/manual/ctest.1.html). Конфигурация находится в [`tests/CMakeLists.txt`](tests/CMakeLists.txt).
 
 ### Запуск всех тестов
 

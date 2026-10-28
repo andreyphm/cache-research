@@ -12,9 +12,9 @@ from statistics import mean, stdev
 from datetime import datetime, timezone
 
 ROOT = Path(__file__).resolve().parent.parent
-NAMES = {"uniform": "Равномерная", "normal": "Нормальная", "zipf": "Ципфа", "hotspot": "Hotspot",
-         "scan": "Скользящий scan", "hot_scan": "Горячий набор + проход",
-         "cyclic": "Цикл", "streams": "Несколько потоков"}
+NAMES = {"uniform": "Uniform", "normal": "Normal", "zipf": "Zipf", "hotspot": "Hotspot",
+         "scan": "Sliding scan", "hot_scan": "Hot set + scan",
+         "cyclic": "Cyclic", "streams": "Multiple streams"}
 LEVEL_BELADY_METRICS = ("l1_belady_hit_rate", "l2_belady_hit_rate", "l3_belady_hit_rate")
 ACCESS_TIME_METRIC = "access_time_score"
 
@@ -100,8 +100,8 @@ def figures(output, family_scores, level_family_scores, ranking, level_rankings,
         ax.grid(axis="x", alpha=0.2)
         save(fig, name)
 
-    ranking_figure(ranking, "Попадания относительно Belady, %",
-                   "Десять лучших троек по общему проценту хитов", "ranking_belady", "#236a9f")
+    ranking_figure(ranking, "Hits relative to Belady, %",
+                   "Top 10 triples by hit rate", "ranking_belady", "#236a9f")
     level_values = [dict(level_ranking) for level_ranking in level_rankings]
     selected = access_time_ranking[:10][::-1]
     positions = np.arange(len(selected))
@@ -119,9 +119,9 @@ def figures(output, family_scores, level_family_scores, ranking, level_rankings,
                        for triple, _ in selected])
     for position, (total, (_, access_score)) in enumerate(zip(totals, selected)):
         ax.text(total + 0.5, position, f"T={access_score:.1f}", va="center", fontsize=8)
-    ax.set(xlim=(0, 110), xlabel="Попадания относительно Belady, %",
-           title="Десять лучших троек с учётом времени доступа 1:3:10")
-    ax.legend(title="Уровень", loc="center left", bbox_to_anchor=(1.01, 0.5))
+    ax.set(xlim=(0, 110), xlabel="Hits relative to Belady, %",
+           title="Top 10 triples by access time (1:3:10)")
+    ax.legend(title="Level", loc="center left", bbox_to_anchor=(1.01, 0.5))
     ax.grid(axis="x", alpha=0.2)
     save(fig, "ranking_access_time_levels")
 
@@ -138,9 +138,9 @@ def figures(output, family_scores, level_family_scores, ranking, level_rankings,
         ax.bar_label(bars, labels=labels, label_type="center", fontsize=8, color="white")
         left += values
     ax.set_yticks(positions, [NAMES[family] for family in workloads])
-    ax.set(xlim=(0, 105), xlabel="Попадания относительно Belady, %",
-           title=f"{label(target)}: состав попаданий по нагрузкам")
-    ax.legend(title="Уровень", loc="center left", bbox_to_anchor=(1.01, 0.5))
+    ax.set(xlim=(0, 105), xlabel="Hits relative to Belady, %",
+           title=f"{label(target)}: hits by workload")
+    ax.legend(title="Level", loc="center left", bbox_to_anchor=(1.01, 0.5))
     ax.grid(axis="x", alpha=0.2)
     save(fig, "best_access_time_workload_levels")
 
@@ -151,12 +151,12 @@ def figures(output, family_scores, level_family_scores, ranking, level_rankings,
     picture = ax.imshow(values, aspect="auto", vmin=0, vmax=100, cmap="viridis")
     ax.set_yticks(range(len(selected)), [label(t) for t, _ in selected], fontsize=8)
     ax.set_xticks(range(len(families)), [NAMES[f] for f in families], rotation=35, ha="right")
-    ax.set_title("Лучшие по времени доступа: результаты по нагрузкам")
+    ax.set_title("Top 10 by access time: hit rate by workload")
     for i in range(values.shape[0]):
         for j in range(values.shape[1]):
             ax.text(j, i, f"{values[i, j]:.1f}", ha="center", va="center", fontsize=7,
                     color="white" if values[i, j] < 50 else "black")
-    fig.colorbar(picture, ax=ax, shrink=0.5, label="% от Belady")
+    fig.colorbar(picture, ax=ax, shrink=0.5, label="% of Belady")
     save(fig, "workloads")
 
 

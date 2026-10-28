@@ -1,387 +1,305 @@
-# Cache research
+<h1 align="center">Cache research</h1>
 
-**Cache research** - проект на C++, посвящённый исследованию алгоритмов кэширования и построению оптимальной трёхуровневой системы кэшей.
+<p align="center">
+  Comparing cache replacement policies in an inclusive three-level cache hierarchy
+</p>
 
-## Содержание
+<p align="center">
+  <img alt="C++20" src="https://img.shields.io/badge/C%2B%2B-20-00599C?logo=cplusplus&logoColor=white">
+  <img alt="CMake" src="https://img.shields.io/badge/CMake-3.16%2B-064F8C?logo=cmake&logoColor=white">
+  <img alt="Python 3.10+" src="https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white">
+</p>
 
-- [Сборка](#сборка)
-- [Использование](#использование)
-- [Алгоритмы кэширования](#алгоритмы-кэширования)
-    - [LFU](#lfu-least-frequently-used)
-    - [2Q](#2q-two-queues)
-    - [ARC](#arc-adaptive-replacement-cache)
-    - [LIRS](#lirs-low-inter-reference-recency-set)
-    - [Belady](#belady-ideal-cache)
-- [Инклюзивная многоуровневая система кэшей](#инклюзивная-многоуровневая-система-кэшей)
-- [Тестирование](#тестирование)
-- [Структура проекта](#структура-проекта)
-- [Исследование трёхуровневой системы](#исследование-трёхуровневой-системы)
-    - [Рейтинг по общему проценту попаданий](#рейтинг-по-общему-проценту-попаданий)
-    - [Рейтинг с учётом времени доступа](#рейтинг-с-учётом-времени-доступа)
-    - [Результаты по нагрузкам](#результаты-по-нагрузкам)
-    - [Вывод](#вывод)
-- [Запуск исследования](#запуск-исследования)
+---
 
-## Сборка
+The project implements four cache replacement policies — LFU, 2Q, ARC and LIRS — and combines them into an inclusive multi-level cache hierarchy. The command-line program runs a request sequence through a hierarchy described in a config file and prints the number of hits. A separate research pipeline compares every three-level combination of the policies against the ideal Belady cache.
 
-Требования:
+- Each level of the hierarchy can use any of the four policies and its own capacity.
+- The hierarchy is inclusive: a key evicted from a lower level is invalidated on every level above it.
+- The Belady cache knows the whole request sequence in advance and serves as an upper bound on hits.
+- The research compares all 64 ordered triples of policies on 8 workloads, both by total hits and by access time.
 
-- [CMake](https://cmake.org/cmake/help/latest/) 3.16 или новее;
-- компилятор с поддержкой C++20.
+## Contents
 
-Установка инструментов сборки:
+- [Getting started](#getting-started)
+- [Usage](#usage)
+- [Cache replacement policies](#cache-replacement-policies)
+  - [LFU](#lfu-least-frequently-used)
+  - [2Q](#2q-two-queues)
+  - [ARC](#arc-adaptive-replacement-cache)
+  - [LIRS](#lirs-low-inter-reference-recency-set)
+  - [Belady](#belady-ideal-cache)
+- [Inclusive hierarchy](#inclusive-hierarchy)
+  - [Request handling](#request-handling)
+  - [Filling the levels](#filling-the-levels)
+  - [Eviction and invalidation](#eviction-and-invalidation)
+- [Research](#research)
+  - [Setup](#setup)
+  - [Hit-rate ranking](#hit-rate-ranking)
+  - [Access-time ranking](#access-time-ranking)
+  - [Per-workload results](#per-workload-results)
+  - [Conclusions](#conclusions)
+  - [Reproducing the research](#reproducing-the-research)
+- [Testing](#testing)
+- [Project layout](#project-layout)
 
-```bash
-sudo apt update
-sudo apt install build-essential cmake git
-```
+## Getting started
 
-Клонирование репозитория и сборка проекта:
+> [!NOTE]
+> The build and tests are verified on Windows ([MSYS2](https://www.msys2.org/) UCRT64) and Linux (Ubuntu 24.04).
+
+Requirements:
+
+| Tool | Version | Used for |
+|---|---|---|
+| GCC | C++20 support | building |
+| [CMake](https://cmake.org/) | 3.16+ | building, fetching GoogleTest |
+| Python | 3.10+ | the research pipeline |
+| matplotlib, NumPy | any | research figures |
+
+GoogleTest is fetched automatically on the first configure.
 
 ```bash
 git clone https://github.com/andreyphm/Cache_research.git
 cd Cache_research
+```
+
+### Windows (MSYS2 UCRT64)
+
+Install the toolchain from an MSYS2 UCRT64 terminal:
+
+```bash
+pacman -S mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja
+```
+
+Build:
+
+```bash
 cmake -S . -B build
 cmake --build build
 ```
 
-## Использование
+### Linux (Ubuntu)
 
-Общий формат команды:
+Install the toolchain:
 
 ```bash
-./build/cache_research.out <config-file>
+sudo apt install -y build-essential cmake git
 ```
 
-Файл конфигурации задаёт число уровней и алгоритмы кэширования на каждом из уровней: `LFU`, `ARC`, `2Q` или `LIRS` от верхнего уровня к нижнему.
-Через стандартный ввод передаются ёмкости всех уровней от верхнего к нижнему, число запросов и ключи. Число ёмкостей должно совпадать с числом уровней, сами ёмкости не могут уменьшаться от верхнего уровня к нижнему.
+Build:
 
-Программа выводит количество попаданий.
+```bash
+cmake -S . -B build
+cmake --build build
+```
 
-Пример содержимого файла конфигурации:
+## Usage
+
+The program takes the path to a config file as its only argument and reads the requests from standard input.
+
+### Windows
+
+```powershell
+cmd /c ".\build\cache_research.out.exe config.txt < input.txt"
+```
+
+> [!TIP]
+> PowerShell has no `<` input redirection, so the program is launched through `cmd /c`. In an MSYS2 terminal the usual syntax works: `./build/cache_research.out config.txt < input.txt`.
+
+### Linux
+
+```bash
+./build/cache_research.out config.txt < input.txt
+```
+
+### Config format
+
+The first number is the level count. It is followed by one policy name per level, from the top level (L1) down: `LFU`, `ARC`, `2Q` or `LIRS`.
 
 ```text
 2
 LFU ARC
 ```
 
-Пример ввода:
+### Input format
+
+Standard input holds one capacity per level from the top level down, then the request count, then the requests. Capacities must be positive and must not decrease from top to bottom.
 
 ```text
 2 4 4
 1 2 1 2
 ```
 
-## Алгоритмы кэширования
+Here L1 holds 2 keys, L2 holds 4 keys, and there are 4 requests.
+
+### Output format
+
+The program prints the total number of hits across all levels. In the example above the first two requests miss and load keys `1` and `2` into both levels, and the last two requests hit L1:
+
+```text
+2
+```
+
+On invalid input — a wrong argument count, an unreadable config, an unknown policy, a non-positive or decreasing capacity, fewer requests than announced — the program prints a message to stderr and exits with code `1`.
+
+## Cache replacement policies
+
+Every policy below keeps its entries in linked lists and finds keys through a hash table. Some policies also keep **ghost entries** — keys of recently evicted entries without their data. A ghost entry does not take up capacity and does not count as a hit, but it tells the policy that a key has been seen before.
 
 ### LFU (Least Frequently Used)
 
-Реализация: [`headers/LFU_cache.hpp`](headers/LFU_cache.hpp).
+Implementation: [`headers/LFU_cache.hpp`](headers/LFU_cache.hpp).
 
-#### Устройство
-
-Кэш содержит один список, элементы упорядочены по убыванию частоты обращений. Среди элементов с одинаковой частотой недавно использованные находятся ближе к началу. Размер кэша фиксирован.
-
-#### Поиск
-
-Ключ ищется в хеш-таблице. При попадании частота увеличивается на единицу, запись перемещается на соответствующее место в списке.
-
-#### Вставка
-
-После загрузки данных новый элемент добавляется в конец списка с частотой `0`. Затем частота увеличивается до `1`, а элемент перемещается перед остальными элементами с данной частотой.
-
-#### Вытеснение
-
-При заполненном кэше перед вставкой нового элемента удаляется последний элемент списка - с наименьшей частотой, при совпадении частот удаляется элемент с наиболее давним временем последнего обращения.
+Each entry counts its accesses. The entries are kept sorted by this count, and among entries with the same count the most recently used one comes first. A hit increments the count and moves the entry to its new place. When the cache is full, the entry with the lowest count is evicted; on a tie, the one used least recently.
 
 ### 2Q (Two Queues)
 
-Реализация: [`headers/2Q_cache.hpp`](headers/2Q_cache.hpp).
+Implementation: [`headers/2Q_cache.hpp`](headers/2Q_cache.hpp).
 
-#### Устройство
+2Q separates keys seen once from keys that are reused:
 
-Кэш содержит две очереди: очередь новых элементов `A1in` и очередь повторно загруженных элементов `Am`. В `A1in` элементы упорядочены по времени вставки, в `Am` - по времени последнего обращения. Отдельно хранится ghost-очередь `A1out` - ограниченная история ключей, вытесненных из `A1in`, не содержащая данных. Размеры кэша и ghost-списка фиксированы. Заданы два параметра: `kin` - рекомендуемый размер `A1in`, используется при выборе элемента для вытеснения; `kout` - максимальный размер ghost-списка.
+- **`A1in`** — a FIFO queue of new entries. A hit here does not change the order.
+- **`A1out`** — ghost entries of keys evicted from `A1in`.
+- **`Am`** — an LRU queue of reused entries. A hit moves the entry to the front.
 
-#### Поиск
-
-Ключ ищется в хеш-таблице. При попадании в `A1in` порядок элементов не меняется. При попадании в `Am` найденный элемент перемещается в начало очереди.
-
-#### Вставка
-
-После загрузки данных новый элемент добавляется в начало `A1in`. Если ключ найден в `A1out`, данные загружаются повторно, освобождается место в кэше, а элемент переносится в начало `Am`.
-
-#### Вытеснение
-
-При заполненном кэше выбор зависит от размера `A1in`. Если он превышает `kin`, последний элемент `A1in` переносится в начало `A1out` без сохранения данных. Иначе удаляется последний элемент `Am` без сохранения ключа. При вставке нового ключа, если история уже содержит `kout` элементов, перед переносом удаляется ключ, который раньше остальных был перенесён в `A1out`.
+A new key goes to `A1in`. A key found in `A1out` has been requested again soon after eviction, so it goes straight to `Am`. When the cache is full, the oldest entry of `A1in` is moved to `A1out` if `A1in` is larger than a quarter of the capacity; otherwise the least recently used entry of `Am` is evicted.
 
 ### ARC (Adaptive Replacement Cache)
 
-Реализация: [`headers/ARC_cache.hpp`](headers/ARC_cache.hpp).
+Implementation: [`headers/ARC_cache.hpp`](headers/ARC_cache.hpp).
 
-#### Устройство
+ARC splits the cache into two lists and adapts the split to the workload:
 
-Кэш содержит два списка: список недавно добавленных элементов `T1` и список повторно использованных элементов `T2`. В `T1` элементы упорядочены по времени вставки, в `T2` - по времени последнего обращения. Отдельно хранятся ghost-списки `B1` и `B2` - истории ключей, вытесненных из `T1` и `T2` соответственно, не содержащие данных. В ghost-списках ключи упорядочены по времени переноса в историю, недавно перенесённые находятся ближе к началу.
+- **`T1`** — entries accessed once recently;
+- **`T2`** — entries accessed at least twice;
+- **`B1`**, **`B2`** — ghost entries of keys evicted from `T1` and `T2`.
 
-Размер кэша `capacity` фиксирован. Задан параметр `target_t1_size_` - рекомендуемый размер `T1`, используется при выборе элемента для вытеснения. Начальное значение параметра равно `capacity / 2`, его значение ограничено диапазоном от `0` до `capacity`. Суммарный размер `T1` и `B1` не превышает `capacity`, суммарный размер всех четырёх списков не превышает `2 * capacity`.
+A hit in `T1` or `T2` moves the entry to the front of `T2`. A new key goes to `T1`. ARC keeps a target size for `T1`, starting at half the capacity. When a full cache needs space, it evicts from `T1` if `T1` is above the target and from `T2` otherwise; the evicted key goes to the matching ghost list.
 
-#### Поиск
-
-Ключ ищется в хеш-таблице. При попадании в `T1` или `T2` элемент переносится в начало `T2`.
-
-#### Вставка
-
-После загрузки данных новый элемент добавляется в начало `T1`, при необходимости предварительно освобождается место в кэше.
-
-Если ключ найден в `B1` или `B2`, данные загружаются повторно. При восстановлении из `B1` параметр `target_t1_size_` увеличивается на единицу, при восстановлении из `B2` - уменьшается на единицу. После изменения параметра освобождается место в кэше, а элемент переносится в начало `T2`.
-
-#### Вытеснение
-
-При заполненном кэше выбор зависит от размера `T1`. Если он превышает `target_t1_size_`, вытесняется последний элемент `T1` - с наиболее давним временем вставки. При восстановлении из `B2` непустой список `T1` выбирается также при равенстве его размера `target_t1_size_`. В остальных случаях вытесняется последний элемент `T2` - с наиболее давним временем последнего обращения. Данные удаляются, а ключ переносится в начало соответствующего ghost-списка: из `T1` в `B1`, из `T2` в `B2`.
-
-При вставке нового ключа, если размер `T1` равен `capacity`, последний элемент `T1` удаляется без сохранения ключа в истории. Если суммарный размер `T1` и `B1` равен `capacity`, но размер `T1` меньше `capacity`, перед вытеснением удаляется последний ключ `B1` - с наиболее давним временем переноса в историю. В остальных случаях, если суммарный размер всех четырёх списков равен `2 * capacity`, перед вытеснением по тому же критерию удаляется последний ключ `B2`.
+A request for a ghost key shows which list was too small. A key found in `B1` means `T1` should have been larger, so the target grows by one; a key found in `B2` means the same for `T2`, so the target shrinks by one. In both cases the key returns to `T2`. The ghost lists are bounded so that `T1` and `B1` together hold at most `capacity` keys, and all four lists at most `2 × capacity`.
 
 ### LIRS (Low Inter-reference Recency Set)
 
-Реализация: [`headers/LIRS_cache.hpp`](headers/LIRS_cache.hpp).
+Implementation: [`headers/LIRS_cache.hpp`](headers/LIRS_cache.hpp).
 
-#### Устройство
+LIRS ranks keys by how short the gap between their last two accesses is. Keys with a short gap form the **LIR** set and are protected from eviction. All other keys form the **HIR** set, and eviction candidates come only from there. LIR takes 99% of the capacity, and HIR uses the rest.
 
-Кэш содержит две группы элементов: `LIR` - элементы, не участвующие в непосредственном вытеснении, и `HIR` - элементы, из которых выбирается кандидат на вытеснение. Стек `S` содержит все элементы `LIR`, часть элементов `HIR` с данными и ключи вытесненных элементов `HIR` без данных. В `S` элементы упорядочены по времени последнего обращения, недавно использованные находятся ближе к началу. Очередь `Q` содержит только элементы `HIR` с данными; добавление и перемещение элементов выполняются в начало очереди, вытеснение - с конца.
+- **Stack `S`** holds keys in recency order: all LIR keys and HIR keys seen recently, including ghost entries. The bottom of `S` is always a LIR key; HIR keys below it are pruned.
+- **Queue `Q`** holds the HIR entries with data. The cache evicts from the end of `Q`.
 
-Размер кэша `capacity` фиксирован. Максимальное число элементов `LIR` задаётся как `lir_capacity_ = capacity * 99 / 100`. Оставшиеся резидентные позиции используются элементами `HIR`. Размер стека `S` отдельным параметром не ограничен.
-
-#### Поиск
-
-Ключ ищется в хеш-таблице. При попадании в `LIR` элемент перемещается в начало `S`, после чего выполняется очистка стека - с его конца последовательно удаляются элементы `HIR` до первого элемента `LIR`.
-
-При попадании в `HIR` с данными, если элемент присутствует в `S`, он перемещается в начало стека, удаляется из `Q` и переводится в группу `LIR`. Элемент `LIR` с наиболее давним временем последнего обращения переводится в группу `HIR` и переносится из конца `S` в начало `Q`. Затем выполняется очистка стека.
-
-Если элемент `HIR` с данными отсутствует в `S`, он добавляется в начало стека и перемещается в начало `Q` без изменения группы.
-
-#### Вставка
-
-После загрузки данных, если число элементов `LIR` меньше `lir_capacity`, новый элемент добавляется в начало `S` как `LIR`. Иначе новый элемент добавляется в начало `S` и `Q` как `HIR`, при необходимости предварительно освобождается место в кэше.
-
-Если ключ присутствует в `S` без данных, данные загружаются повторно, элемент перемещается в начало стека и переводится в группу `LIR`. Элемент `LIR` с наиболее давним временем последнего обращения переводится в группу `HIR` и переносится из конца `S` в начало `Q`, при необходимости предварительно освобождается место в очереди. Затем выполняется очистка стека.
-
-#### Вытеснение
-
-При заполненном кэше перед добавлением элемента в `Q` удаляется последний элемент очереди без сохранения данных. Если его ключ присутствует в `S`, он сохраняется в истории. Иначе ключ удаляется из хеш-таблицы.
-
-При очистке стека элементы с данными сохраняются в `Q`, ключи без данных удаляются из хеш-таблицы.
+When a HIR key is accessed while it is still in `S`, its gap is shorter than that of the oldest LIR key. The key becomes LIR, and the LIR key at the bottom of `S` becomes HIR and moves to `Q`. A HIR key that is no longer in `S` stays HIR and only moves to the front of `Q` and `S`. A ghost key found in `S` is reloaded and becomes LIR the same way.
 
 ### Belady (Ideal cache)
 
-Реализация: [`headers/belady_cache.hpp`](headers/belady_cache.hpp).
+Implementation: [`headers/belady_cache.hpp`](headers/belady_cache.hpp).
 
-#### Устройство
+Belady's algorithm is the optimal policy, but it requires knowing the future. It receives the whole request sequence in advance and, for every cached key, tracks the position of its next request. When the cache is full, it evicts the key that will be needed latest, or one that will never be needed again. No other policy with the same capacity gets more hits on the same sequence, so the research measures every hierarchy against it.
 
-Кэш содержит один список, элементы упорядочены по времени вставки. Для каждого элемента хранится позиция следующего обращения `next_use_`. Если обращений больше не будет, используется специальное значение `never`, заведомо большее любого числа типа std::size_t. Размер кэша `capacity` фиксирован.
+## Inclusive hierarchy
 
-Конструктор получает ёмкость и всю последовательность запросов, для каждого
-ключа заранее строится очередь позиций его обращений. Нулевая ёмкость и
-обращение, не соответствующее следующему элементу заданной последовательности,
-считаются ошибками входных данных.
+Implementation: [`source/cache_runner.cpp`](source/cache_runner.cpp).
 
-#### Поиск
-
-Перед поиском текущая позиция удаляется из очереди обращений к ключу. Следующая позиция берётся из начала очереди, если очередь пуста - используется `never`.
-
-Ключ ищется в хеш-таблице. При попадании обновляется `next_use_`, порядок элементов в списке не меняется.
-
-#### Вставка
-
-После загрузки данных новый элемент добавляется в конец списка вместе с позицией следующего обращения, при необходимости предварительно освобождается место в кэше.
-
-#### Вытеснение
-
-При заполненном кэше список просматривается целиком. Удаляется элемент с наибольшим значением `next_use_` - тот, который понадобится позже остальных. Элементы, к которым больше не будет обращений, вытесняются в первую очередь; если таких несколько, выбирается первый из них. Данные удаляются вместе с ключом из хеш-таблицы кэша, очередь будущих обращений сохраняется.
-
-## Инклюзивная многоуровневая система кэшей
-
-Система представляет собой последовательность уровней от самого верхнего к нижнему. Число уровней задаётся конфигурацией. Для каждого уровня независимо выбирается один из алгоритмов кэширования и указывается собственная ёмкость.
+The hierarchy is a sequence of levels from the top (L1) to the bottom. The config sets the number of levels, and each level gets its own policy and capacity. The levels are inclusive: every key held by a level is also held by all levels below it. That is why capacities must not decrease from top to bottom, and the bottom capacity limits the number of distinct keys in the whole hierarchy.
 
 > [!NOTE]
-> Belady используется как самостоятельный эталонный кэш и не входит в инклюзивную иерархию.
+> The Belady cache serves only as a reference and is not part of the hierarchy.
 
-Ёмкости не могут уменьшаться сверху вниз, поскольку система поддерживает инклюзивность: если данные находятся в L1, их копии обязательно присутствуют в L2 и L3; если данные находятся в L2, копия обязательно присутствует в L3. Общее число различных резидентных ключей во всей иерархии ограничено ёмкостью самого нижнего кэша.
+### Request handling
 
-### Обработка запроса
+A request goes to L1 first. On a miss it goes down to L2, then L3, and finally to the storage. The hit is counted on the first level that has the key, and only there. So the total hit count of the hierarchy equals the sum of the per-level hits, and a request that misses every level is a total miss.
 
-Каждый запрос сначала поступает в L1. Если ключ найден, запрос завершается и нижние уровни не просматриваются. При промахе L1 обращается к L2, затем по той же схеме запрос может перейти в L3 и далее в хранилище.
+### Filling the levels
 
-Попаданием считается первый уровень, на котором найдены данные:
+The data goes back up along the same path, and every level that missed stores a copy:
 
-- при попадании в L1 запрос учитывается только как попадание L1;
-- при промахе L1 и попадании L2 запрос учитывается только как попадание L2;
-- при промахах L1 и L2 и попадании L3 запрос учитывается только как попадание L3;
-- если ключ отсутствует во всех кэшах, выполняется загрузка из хранилища и фиксируется общий промах.
+- an L2 hit inserts the key into L1;
+- an L3 hit inserts it into L2 and L1;
+- a load from the storage inserts it into every level.
 
-Таким образом, число попаданий всей системы равно сумме попаданий L1, L2 и L3. Один запрос не может одновременно учитываться как попадание нескольких уровней.
+If a level has to make space, it chooses a victim by its own policy. The levels share no policy state: LFU counts, ARC and 2Q lists, and LIRS sets of one level do not affect another.
 
-### Заполнение уровней
+### Eviction and invalidation
 
-После нахождения или загрузки данных результат возвращается вверх по пройденному пути. Каждый уровень, на котором произошёл промах, сохраняет полученные данные. Например:
+Evicting a key from an upper level does not change the levels below. After L1 evicts a key, L2 and L3 may still hold it, and a later request can hit there and refill L1.
 
-- попадание L2 приводит к вставке копии данных в L1;
-- попадание L3 приводит к вставке копии данных в L2 и L1;
-- загрузка из хранилища приводит к вставке копии данных во все уровни.
+Evicting a key from a lower level invalidates it on every level above. If L3 evicts a key, its copies in L2 and L1 are removed at once; if L2 evicts a key, the L1 copy is removed and the L3 copy stays. This keeps the hierarchy inclusive after any eviction. Ghost entries are not copies of the data, so invalidation does not apply to them.
 
-Если вставка требует освобождения места, каждый уровень самостоятельно выбирает жертву по правилам своего алгоритма. Политики и их служебное состояние независимы: частота LFU, очереди ARC и 2Q, а также группы LIRS одного уровня не влияют непосредственно на другой уровень.
+A lower level sees only the requests that missed every level above it. An L1 hit does not update the access count or recency of the same key in L2 and L3. So a key can be popular in L1 but old or rare in L3, and when L3 evicts it, the L1 copy is invalidated anyway. This interplay of independent policies and cascading invalidation is what the research explores.
 
-### Вытеснение и инвалидация
+## Research
 
-Вытеснение из верхнего уровня не изменяет нижние уровни. Например, после удаления ключа из L1 его копии могут продолжать находиться в L2 и L3, поэтому последующий запрос способен попасть в один из них и снова заполнить L1.
+### Setup
 
-Вытеснение из нижнего уровня требует обратного действия. Если L3 удаляет ключ, все его копии в L2 и L1 немедленно инвалидируются. Если ключ удаляется из L2, удаляется также копия L1, но копия L3 сохраняется.
+The research compares all 64 ordered triples of LFU, ARC, 2Q and LIRS, repetitions included. The levels have capacities C, 2C and 4C, where C is 64, 256 or 1,024. The reference is a single Belady cache with capacity 4C. Each trace has 120C requests: 7,680, 30,720 or 122,880. The caches start empty, and every request counts.
 
-Это правило не позволяет верхнему кэшу хранить данные, которых уже нет ниже, и сохраняет инклюзивность после любых вытеснений. Исторические записи без данных, используемые ARC, 2Q и LIRS, не считаются резидентными копиями, не занимают ёмкость данных и не являются попаданиями.
+The main score is the share of Belady's hits:
 
-### Состояние алгоритмов на разных уровнях
+$$
+\mathrm{score} = 100 \times \frac{\mathrm{hits}}{\mathrm{belady\_hits}}
+$$
 
-Нижний уровень видит только запросы, завершившиеся промахом на всех предыдущих уровнях. Поэтому обращение, попавшее в L1, не обновляет частоту или давность использования копий в L2 и L3. Аналогично попадание L2 не обновляет состояние L3.
+In the table below, W is the number of keys a workload draws from.
 
-Из-за этого один ключ может считаться часто используемым в L1, но старым или редким в L3. Если нижний уровень вытеснит такой ключ, верхние копии будут инвалидированы независимо от их локальной популярности. Взаимодействие локальных политик замещения и каскадных инвалидаций является основной особенностью исследуемой системы.
+| Workload | Parameters |
+|---|---|
+| Uniform | independent requests to W = 8C keys |
+| Normal | W = 8C, mean 4C, standard deviation 2C; out-of-range values are redrawn |
+| Zipf | W = 8C, rank r has weight 1/r^1.2 |
+| Hotspot | W = 8C; 80% of requests go to H = 2C hot keys |
+| Sliding scan | sequential windows of 6C keys shifted by 1.5C; neighboring windows overlap by 4.5C |
+| Hot set + scan | 4C requests to H = 2C hot keys, then a pass over 4C new keys |
+| Cyclic | a sequential pass over W = 6C keys, repeated 20 times |
+| Multiple streams | Zipf (α = 1), a cyclic pass and Hotspot (p = 0.9) over separate sets of 4C keys, mixed 1:1:1 |
 
-## Тестирование
+Sliding scan and cyclic are deterministic and run once. The other workloads use seeds 1–5. All triples and Belady get the same trace for a given workload, capacity and seed. In total there are 96 traces and 6,144 hierarchy runs.
 
-Тесты используют [**GoogleTest 1.17.0**](https://google.github.io/googletest/) и запускаются через [**CTest**](https://cmake.org/cmake/help/latest/manual/ctest.1.html). Конфигурация находится в [`tests/CMakeLists.txt`](tests/CMakeLists.txt).
+The ranking averages over seeds, then over the three capacities, then over the eight workloads.
 
-### Запуск всех тестов
+### Hit-rate ranking
 
-Команды выполняются из корня проекта после сборки проекта и тестов.
+**2Q → 2Q → LIRS** comes first with 84.65% of Belady's hits. LFU → 2Q → LIRS is second with 84.64%, only 0.01 percentage points behind.
 
-Для CMake/CTest **3.20 и новее**:
+![Top 10 triples by hit rate](benchmarks/figures/ranking_belady.png)
 
-```bash
-ctest --test-dir build --output-on-failure
-```
+### Access-time ranking
 
-Для CMake/CTest **3.16-3.19**:
+This ranking assumes the access times of L1, L2 and L3 are in the ratio 1:3:10, so hits on faster levels weigh more:
 
-```bash
-(cd build && ctest --output-on-failure)
-```
+$$
+T = 100 \times \frac{\mathrm{L1\_hits} + \mathrm{L2\_hits} / 3 + \mathrm{L3\_hits} / 10}{\mathrm{belady\_hits}}
+$$
 
-### Запуск тестов указанной цели
+The triples are sorted by `T`, shown on the right. The colored segments show the L1, L2 and L3 hits relative to Belady; together they add up to the total hit rate of the hierarchy.
 
-`<target>` - одна из целей (`ARC` / `LFU` / `2Q` / `LIRS` / `belady` / `interface`)
+![Top 10 triples by access time](benchmarks/figures/ranking_access_time_levels.png)
 
-Для CMake/CTest **3.20 и новее**:
+The breakdown of hits for the winner, **LIRS → LIRS → LIRS**, on each workload:
 
-```bash
-ctest --test-dir build -L <target> --output-on-failure
-```
+![Winner hits by workload](benchmarks/figures/best_access_time_workload_levels.png)
 
-Для CMake/CTest **3.16-3.19**:
+### Per-workload results
 
-```bash
-(cd build && ctest -L <target> --output-on-failure)
-```
+The rows are the top 10 triples of the access-time ranking. Each cell is the total hit rate relative to Belady on one workload.
 
-## Структура проекта
+![Top 10 triples by workload](benchmarks/figures/workloads.png)
 
-```text
-Cache_research/
-├── headers/
-│   ├── 2Q_cache.hpp            # 2Q кэш
-│   ├── ARC_cache.hpp           # ARC кэш
-│   ├── LFU_cache.hpp           # LFU кэш
-│   ├── LIRS_cache.hpp          # LIRS кэш
-│   ├── belady_cache.hpp        # Belady кэш
-│   ├── benchmark_runner.hpp    # запуск исследования
-│   ├── cache_runner.hpp        # запуск многоуровневой системы
-│   ├── config.hpp              # конфигурация уровней
-│   └── SlowGetPage.hpp         # источник данных для кэшей
-├── source/
-│   ├── benchmark_main.cpp      # внутренний интерфейс запуска одной трассы
-│   ├── benchmark_runner.cpp    # выполнение исследования на одной трассе
-│   ├── cache_runner.cpp        # многоуровневая система кэшей
-│   ├── config.cpp              # разбор файла конфигурации
-│   └── main.cpp                # консольный интерфейс
-├── tests/
-│   ├── 2Q_tests.cpp            # тесты 2Q
-│   ├── ARC_tests.cpp           # тесты ARC
-│   ├── LFU_tests.cpp           # тесты LFU
-│   ├── LIRS_tests.cpp          # тесты LIRS
-│   ├── belady_tests.cpp        # тесты Belady
-│   ├── interface_tests.cpp     # тесты интерфейса
-│   └── CMakeLists.txt          # сборка и регистрация тестов
-├── benchmarks/
-│   ├── figures/                # графики исследования
-│   ├── scripts/                # генерация, запуск, обработка данных
-│   ├── data/                   # входные .txt (создаются локально)
-│   └── results/                # результаты .csv (создаются локально)
-└── CMakeLists.txt              # сборка программы и тестов
-```
+### Conclusions
 
-## Исследование трёхуровневой системы
+**By total hits**, 2Q → 2Q → LIRS and LFU → 2Q → LIRS are practically tied: the 0.01-point gap is smaller than the spread between seeds. The top four triples all have 2Q in L2 and LIRS in L3 and differ only in L1, and all top 10 have LIRS in L3. So the lower levels decide the total: LIRS keeps the data that reaches L3, and 2Q in L2 separates reused keys from one-time and sequential requests.
 
-Сравниваются все 64 упорядоченные тройки LFU, ARC, 2Q и LIRS, включая повторения алгоритмов. Ёмкости уровней равны C, 2C и 4C, где C = 64, 256 или 1024; эталон — один Belady с ёмкостью 4C. Длина каждой трассы равна 120C: 7680, 30720 или 122880 запросов соответственно. Кэши начинают пустыми, учитываются все запросы. Основная оценка рейтинга — `100 × hits / belady_hits`.
+**By access time**, LIRS → LIRS → LIRS wins with T = 46.75, ahead of LFU → LIRS → LIRS with T = 43.95. Yet it is only 16th by total hits, with 82.05%, while 2Q → 2Q → LIRS is only 17th by access time, with T = 41.32. The reason is where the hits happen:
 
-Для каждого уровня дополнительно сохраняется число попаданий `Lk_hits`. Сумма попаданий L1, L2 и L3 равна общему числу попаданий иерархии.
+| Triple | L1 | L2 | L3 | Total |
+|---|---:|---:|---:|---:|
+| LIRS → LIRS → LIRS | 37.87% | 19.12% | 25.06% | 82.05% |
+| 2Q → 2Q → LIRS | 32.24% | 16.49% | 35.92% | 84.65% |
 
-Для случайных нагрузок используются seed 1-5. Для детерминированных нагрузок выполняется один запуск.
+2Q → 2Q → LIRS gets more hits, but a much larger share of them comes from the slow L3. LIRS → LIRS → 2Q shows the difference between the two criteria even more clearly: it is 32nd of 64 by total hits with 76.05%, but 5th by access time with T = 42.72.
 
-| Нагрузка | Параметры |
-| --- | --- |
-| Равномерная | Независимый выбор из W = 8C ключей |
-| Нормальная | W = 8C, математическое ожидание 4C, стандартное отклонение 2C; значения вне диапазона генерируются повторно |
-| Ципфа | W = 8C, вес ранга r равен 1/r^1,2 |
-| Hotspot | W = 8C; 80% запросов к горячим H = 2C ключам |
-| Скользящий scan | Последовательные окна шириной 6C со сдвигом 1,5C; соседние окна перекрываются на 4,5C |
-| Горячий набор + проход | 4C запросов к H = 2C горячим ключам, затем проход по 4C новым ключам |
-| Цикл | Последовательный проход по W = 6C ключей, повторяемый 20 раз |
-| Несколько потоков | Zipf(α=1), циклический проход и Hotspot(p=0,9), отдельные множества по 4C ключей; доли 1:1:1 |
+### Reproducing the research
 
-Всего создаётся 96 трасс и выполняется 6 144 запуска иерархии. Scan и цикл детерминированы, остальные нагрузки используют seed 1–5. Все тройки и Belady получают одну и ту же последовательность для данного сценария и seed. История ключей без данных не считается попаданием и не входит в ёмкость C.
-
-Рейтинг рассчитывается так: среднее по seed → среднее по трём ёмкостям → среднее по восьми нагрузкам.
-
-### Рейтинг по общему проценту попаданий
-
-Лучшей стала **2Q → 2Q → LIRS**: 84,65% от попаданий Belady. Ближайшая тройка LFU → 2Q → LIRS получила 84,64%; разница — 0,01 процентного пункта.
-
-![Общий рейтинг](benchmarks/figures/ranking_belady.png)
-
-### Рейтинг с учётом времени доступа
-
-Время обращения к L1, L2 и L3 принимается в отношении 1:3:10. Оценка рассчитывается как
-`100 × (L1_hits + L2_hits / 3 + L3_hits / 10) / belady_hits`. Чем выше значение, тем больше попаданий приходится на быстрые уровни.
-
-Конфигурации отсортированы по взвешенной оценке `T`, указанной справа. Цветные сегменты показывают доли попаданий L1, L2 и L3 относительно Belady; их сумма равна общему проценту попаданий системы.
-
-![Рейтинг с учётом времени доступа](benchmarks/figures/ranking_access_time_levels.png)
-
-Для победителя **LIRS → LIRS → LIRS** отдельно показан состав попаданий на каждой нагрузке.
-
-![Победитель по нагрузкам](benchmarks/figures/best_access_time_workload_levels.png)
-
-### Результаты по нагрузкам
-
-По вертикали расположены десять конфигураций из рейтинга времени доступа. В ячейках указан их общий процент попаданий относительно Belady на каждой нагрузке.
-
-![Десять лучших троек по нагрузкам](benchmarks/figures/workloads.png)
-
-### Вывод
-
-Если учитывать только суммарные попадания, то первое место в рейтинге занимает **2Q → 2Q → LIRS** с результатом 84,65% от Belady. Следующая конфигурация, LFU → 2Q → LIRS, получила 84,64%. Разница около 0,01 процентного пункта меньше наблюдаемого разброса между seed, поэтому эти два результата практически эквивалентны в рамках проведённого эксперимента.
-
-Первые четыре места общего рейтинга занимают системы с 2Q в L2 и LIRS в L3; меняется только алгоритм L1. Кроме того, все десять лидеров используют LIRS на третьем уровне. Это указывает, что для максимизации общего числа попаданий решающую роль играет нижняя часть иерархии: LIRS хорошо удерживает данные, дошедшие до L3, а 2Q в L2 отделяет повторно используемые ключи от однократных и последовательных обращений.
-
-При временах доступа L1:L2:L3 = 1:3:10 лидирует **LIRS → LIRS → LIRS** с оценкой T = 46,75. Второе место занимает LFU → LIRS → LIRS с T = 43,95, преимущество первой системы в рейтинге составляет около 2,80 T. При этом LIRS → LIRS → LIRS находится только на 16-м месте по общему числу попаданий с результатом 82,05%, а победитель общего рейтинга 2Q → 2Q → LIRS занимает 17-е место по времени доступа с оценкой T = 41,32.
-
-Причина различия видна в распределении попаданий по уровням. У LIRS → LIRS → LIRS относительно Belady в среднем 37,87% попаданий приходится на L1, 19,12% — на L2 и 25,06% — на L3. У 2Q → 2Q → LIRS распределение равно 32,24%, 16,49% и 35,92% соответственно - система получает больше попаданий, но заметно большая их часть происходит в медленном L3.
-
-Особенно хорошо различие критериев показывает **LIRS → LIRS → 2Q**. По общему числу попаданий эта система занимает только 32-е место из 64 с результатом 76,05% от Belady. Однако во временном рейтинге она находится на пятом месте с оценкой T = 42,72. Её попадания распределяются как 35,43% в L1, 13,83% в L2 и 26,80% в L3.
-
-Результат также зависит от характера нагрузки. На распределении Ципфа LIRS → LIRS → LIRS обрабатывает через L1 около 86,5% попаданий Belady благодаря устойчивой группе популярных ключей. На скользящем scan и цикле значительная часть попаданий переносится в L3: около 44,3% и 41,5% соответственно. Эти нагрузки превышают возможности верхних уровней и проверяют сохранение данных при последовательном вытеснении. На нагрузке «горячий набор + проход» основная часть попаданий распределяется между L1 и L2, а вклад L3 остаётся минимальным.
-
-Итоговый выбор зависит от цели. Для максимального общего hit rate предпочтительны конфигурации с 2Q в L2 и LIRS в L3. Если стоимость обращения к нижним уровням существенно выше, наиболее выгодна LIRS → LIRS → LIRS. Выводы относятся к выбранным нагрузкам, ёмкостям C, 2C и 4C, холодному начальному состоянию, выбранному отношению времён доступа и инклюзивной схеме с каскадной инвалидацией.
-
-## Запуск исследования
-
-Для исследования нужны Python 3.10+ и библиотеки для графиков:
+Install the plotting libraries, then configure in Release mode and build the `research` target:
 
 ```bash
 python -m pip install matplotlib numpy
@@ -389,8 +307,92 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --config Release --target research
 ```
 
-Цель `research` собирает внутреннюю программу обработки трасс, генерирует нагрузки, сравнивает 64 тройки с Belady и строит графики. Она доступна, если CMake нашёл Python 3.10 или новее. При необходимости путь к интерпретатору задаётся через `-DPython3_EXECUTABLE=...`. Повторный запуск заменяет результаты CSV и графики.
+The target builds the trace runner, generates the traces, compares the 64 triples against Belady and draws the figures. It is available only if CMake finds Python 3.10 or newer; pass `-DPython3_EXECUTABLE=...` to point it to a specific interpreter. Running it again replaces the previous results.
 
-Параметры находятся в [suite.json](benchmarks/scripts/suite.json). `generators.py` создаёт последовательности, `run.py` запускает C++, `report.py` сохраняет сводные CSV и графики PNG. Справка по скриптам доступна через `--help` у `run.py` и `report.py`.
+The research parameters live in [`benchmarks/scripts/suite.json`](benchmarks/scripts/suite.json). The scripts can also be run by hand:
 
-Файлы трасс сохраняются непосредственно в `benchmarks/data`, результаты — в `benchmarks/results`, графики — в `benchmarks/results/figures`. Для сохранения отдельного эксперимента укажите `run.py --output <каталог> --data <каталог>`, затем `report.py --results <каталог>`.
+- [`generators.py`](benchmarks/scripts/generators.py) generates the traces;
+- [`run.py`](benchmarks/scripts/run.py) runs the C++ trace runner and saves the raw results;
+- [`report.py`](benchmarks/scripts/report.py) aggregates them into CSV summaries and PNG figures.
+
+| Script | Argument | Meaning |
+|---|---|---|
+| `run.py` | `--binary` | path to the built `cache_benchmark.out`, required |
+| `run.py` | `--suite` | research parameters, `scripts/suite.json` by default |
+| `run.py` | `--output` | results directory, `benchmarks/results` by default |
+| `run.py` | `--data` | traces directory, `benchmarks/data` by default |
+| `run.py` | `--jobs` | number of concurrent C++ processes, `2` by default |
+| `run.py` | `--families` | run only the named workloads |
+| `run.py` | `--rerun` | replace the existing results with a new experiment |
+| `report.py` | `--results` | results directory to read, `benchmarks/results` by default |
+
+Figures are saved to `benchmarks/results/figures`. To keep a separate experiment, pass its own directories: `run.py --output <dir> --data <dir>`, then `report.py --results <dir>`.
+
+## Testing
+
+The tests use [GoogleTest 1.17.0](https://google.github.io/googletest/) and run through [CTest](https://cmake.org/cmake/help/latest/manual/ctest.1.html). They are built together with the project; the configuration is in [`tests/CMakeLists.txt`](tests/CMakeLists.txt).
+
+Run all tests from the project root:
+
+```bash
+ctest --test-dir build --output-on-failure
+```
+
+Run one group by its label:
+
+```bash
+ctest --test-dir build -L LIRS --output-on-failure
+```
+
+| Label | What is tested |
+|---|---|
+| `LFU`, `2Q`, `ARC`, `LIRS` | the policy on its own |
+| `belady` | the Belady cache |
+| `interface` | config parsing and the hierarchy |
+
+> [!NOTE]
+> `--test-dir` requires CTest 3.20 or newer. With CTest 3.16–3.19, run the same commands from the build directory: `(cd build && ctest --output-on-failure)`.
+
+## Project layout
+
+```text
+Cache_research/
+├── headers/
+│   ├── 2Q_cache.hpp                              # 2Q cache
+│   ├── ARC_cache.hpp                             # ARC cache
+│   ├── LFU_cache.hpp                             # LFU cache
+│   ├── LIRS_cache.hpp                            # LIRS cache
+│   ├── belady_cache.hpp                          # Belady cache
+│   ├── SlowGetPage.hpp                           # storage behind the bottom level
+│   ├── benchmark_runner.hpp                      # running one research trace
+│   ├── cache_runner.hpp                          # multi-level hierarchy
+│   └── config.hpp                                # config parsing
+├── source/
+│   ├── benchmark_main.cpp                        # trace runner entry point
+│   ├── benchmark_runner.cpp                      # all 64 triples and Belady on one trace
+│   ├── cache_runner.cpp                          # multi-level hierarchy
+│   ├── config.cpp                                # config parsing
+│   └── main.cpp                                  # command-line program
+├── tests/
+│   ├── 2Q_tests.cpp                              # 2Q tests
+│   ├── ARC_tests.cpp                             # ARC tests
+│   ├── LFU_tests.cpp                             # LFU tests
+│   ├── LIRS_tests.cpp                            # LIRS tests
+│   ├── belady_tests.cpp                          # Belady tests
+│   ├── interface_tests.cpp                       # config and hierarchy tests
+│   └── CMakeLists.txt                            # building and registering the tests
+├── benchmarks/
+│   ├── figures/
+│   │   ├── ranking_belady.png                    # hit-rate ranking
+│   │   ├── ranking_access_time_levels.png        # access-time ranking
+│   │   ├── best_access_time_workload_levels.png  # winner hits by workload
+│   │   └── workloads.png                         # top 10 by workload
+│   └── scripts/
+│       ├── generators.py                         # trace generation
+│       ├── run.py                                # running the experiment
+│       ├── report.py                             # CSV summaries and figures
+│       └── suite.json                            # research parameters
+├── .gitignore
+├── CMakeLists.txt                                # building the program, tests and research target
+└── README.md
+```
